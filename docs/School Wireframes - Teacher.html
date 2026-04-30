@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>School Dashboard — Teacher Wireframes (Sketch)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Architects+Daughter&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #ebe7dc; font-family: 'Inter', system-ui, sans-serif; color: #1a1a1a; }
+  * { box-sizing: border-box; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="sketch-kit.jsx"></script>
+<script type="text/babel" src="teacher-sketch.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#c43d1f",
+  "showSchemaTags": true,
+  "showHandwrittenNotes": true
+}/*EDITMODE-END*/;
+
+const TweaksUI = () => {
+  const { values, set } = useTweaks(TWEAK_DEFAULTS);
+  React.useEffect(() => {
+    document.documentElement.style.setProperty('--tweak-accent', values.accent);
+    let s = document.getElementById('tweak-style');
+    if (!s) { s = document.createElement('style'); s.id = 'tweak-style'; document.head.appendChild(s); }
+    s.textContent = `
+      ${!values.showSchemaTags ? '[data-tag], .tag-pill { display: none !important; }' : ''}
+      ${!values.showHandwrittenNotes ? '[data-anno] { display: none !important; }' : ''}
+    `;
+  }, [values]);
+  return (
+    <TweaksPanel title="Tweaks">
+      <TweakSection title="Style">
+        <TweakColor label="Accent color" value={values.accent} onChange={v => set('accent', v)} />
+      </TweakSection>
+      <TweakSection title="Annotations">
+        <TweakToggle label="Show schema tags" value={values.showSchemaTags} onChange={v => set('showSchemaTags', v)} />
+        <TweakToggle label="Show handwritten notes" value={values.showHandwrittenNotes} onChange={v => set('showHandwrittenNotes', v)} />
+      </TweakSection>
+    </TweaksPanel>
+  );
+};
+
+const Intro = () => (
+  <div style={{
+    width: 980, padding: "24px 32px",
+    background: "#fffef9",
+    border: `2px solid #1a1a1a`,
+    borderRadius: 4,
+    marginBottom: 20,
+    boxShadow: "6px 6px 0 rgba(0,0,0,0.12)",
+  }}>
+    <div style={{ fontFamily: skFonts.hand, fontSize: 36, color: sk.ink, fontWeight: 700, marginBottom: 6 }}>
+      School Dashboard — Teacher wireframes
+    </div>
+    <div style={{ fontFamily: skFonts.handSm, fontSize: 14, color: sk.inkSoft, lineHeight: 1.5, maxWidth: 760 }}>
+      Round 2 of 3 — six teacher pages (T1–T6) plus modals &amp; UI states. Persona: <b>Mrs. Kaur</b>, class teacher of 2-A,
+      also teaches English to 3-A &amp; 4-A. Permissions reflect that — she can post notices only to her classes,
+      enter marks only for exams she's been assigned, etc. Every visible field is tagged with its DB column.
+    </div>
+    <div style={{ marginTop: 14, display: "flex", gap: 14, fontFamily: skFonts.mono, fontSize: 11, color: sk.mute, flexWrap: "wrap" }}>
+      <span>· pan = drag empty space · zoom = scroll · click ⤢ to focus an artboard</span>
+    </div>
+  </div>
+);
+
+const ART_W = 1280;
+const ART_H = 820;
+const MODAL_W = 620;
+const MODAL_H = 700;
+const STATE_W = 760;
+const STATE_H = 560;
+
+const App = () => (
+  <DesignCanvas title="Teacher — Sketch wireframes" intro={<Intro />}>
+
+    <DCSection id="overview" title="T1–T2 · Daily landing">
+      <DCArtboard id="t1" label="T1 · Dashboard" width={ART_W} height={ART_H}><T1 /></DCArtboard>
+      <DCArtboard id="t2" label="T2 · My Classes + roster" width={ART_W} height={ART_H}><T2 /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="hw" title="T3 · Homework">
+      <DCArtboard id="t3" label="T3 · Homework (list + composer)" width={ART_W} height={ART_H}><T3 /></DCArtboard>
+      <DCArtboard id="t3m" label="T3 modal · Quick homework" width={MODAL_W} height={MODAL_H}><T3Modal /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="marks" title="T4 · Marks Entry">
+      <DCArtboard id="t4" label="T4 · Marks entry grid" width={ART_W} height={ART_H}><T4 /></DCArtboard>
+      <DCArtboard id="t4c" label="T4 confirm · Publish results" width={MODAL_W} height={MODAL_H}><T4Confirm /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="notices" title="T5 · Notices">
+      <DCArtboard id="t5" label="T5 · Notices (composer + feed)" width={ART_W} height={ART_H}><T5 /></DCArtboard>
+      <DCArtboard id="t5m" label="T5 modal · Compose notice" width={MODAL_W} height={MODAL_H}><T5Modal /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="msg" title="T6 · Messages">
+      <DCArtboard id="t6" label="T6 · Parent-teacher messages" width={ART_W} height={ART_H}><T6 /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="states" title="UI states · teacher-flavored">
+      <DCArtboard id="tsl" label="Loading · marks entry skeleton" width={STATE_W} height={STATE_H}><TStateLoading /></DCArtboard>
+      <DCArtboard id="tse" label="Empty · no homework yet" width={STATE_W} height={STATE_H}><TStateEmpty /></DCArtboard>
+      <DCArtboard id="tser" label="Error · save failed inline retry" width={STATE_W} height={STATE_H}><TStateError /></DCArtboard>
+      <DCArtboard id="tst" label="Toasts + permission denied" width={STATE_W} height={STATE_H}><TStateToastDenied /></DCArtboard>
+    </DCSection>
+
+  </DesignCanvas>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<><App /><TweaksUI /></>);
+</script>
+</body>
+</html>

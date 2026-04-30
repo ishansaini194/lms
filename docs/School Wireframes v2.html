@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>School Dashboard — Admin Wireframes (Sketch)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Architects+Daughter&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #ebe7dc; font-family: 'Inter', system-ui, sans-serif; color: #1a1a1a; }
+  * { box-sizing: border-box; }
+</style>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel" src="sketch-kit.jsx"></script>
+<script type="text/babel" src="admin-sketch.jsx"></script>
+
+<script type="text/babel" data-presets="react">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accent": "#c43d1f",
+  "tableDensity": "comfortable",
+  "showSchemaTags": true,
+  "showHandwrittenNotes": true
+}/*EDITMODE-END*/;
+
+const TweaksUI = () => {
+  const { values, set } = useTweaks(TWEAK_DEFAULTS);
+
+  // Live-apply via global override + CSS
+  React.useEffect(() => {
+    window.sk.accent = values.accent;
+    document.documentElement.style.setProperty('--tweak-accent', values.accent);
+    // toggle tag/anno visibility via CSS
+    const styleId = 'tweak-style';
+    let s = document.getElementById(styleId);
+    if (!s) { s = document.createElement('style'); s.id = styleId; document.head.appendChild(s); }
+    const rowPad = values.tableDensity === 'compact' ? '3px 12px' : values.tableDensity === 'spacious' ? '11px 12px' : '7px 12px';
+    s.textContent = `
+      ${!values.showSchemaTags ? '[data-tag], .tag-pill { display: none !important; }' : ''}
+      ${!values.showHandwrittenNotes ? '[data-anno] { display: none !important; }' : ''}
+    `;
+  }, [values]);
+
+  return (
+    <TweaksPanel title="Tweaks">
+      <TweakSection title="Style">
+        <TweakColor label="Accent color" value={values.accent} onChange={v => set('accent', v)} />
+      </TweakSection>
+      <TweakSection title="Layout">
+        <TweakRadio
+          label="Table density"
+          value={values.tableDensity}
+          onChange={v => set('tableDensity', v)}
+          options={[
+            { value: 'compact', label: 'Compact' },
+            { value: 'comfortable', label: 'Comfortable' },
+            { value: 'spacious', label: 'Spacious' },
+          ]}
+        />
+      </TweakSection>
+      <TweakSection title="Annotations">
+        <TweakToggle label="Show schema tags" value={values.showSchemaTags} onChange={v => set('showSchemaTags', v)} />
+        <TweakToggle label="Show handwritten notes" value={values.showHandwrittenNotes} onChange={v => set('showHandwrittenNotes', v)} />
+      </TweakSection>
+    </TweaksPanel>
+  );
+};
+
+const Intro = () => (
+  <div style={{
+    width: 980, padding: "24px 32px",
+    background: "#fffef9",
+    border: `2px solid #1a1a1a`,
+    borderRadius: 4,
+    marginBottom: 20,
+    boxShadow: "6px 6px 0 rgba(0,0,0,0.12)",
+  }}>
+    <div style={{ fontFamily: skFonts.hand, fontSize: 36, color: sk.ink, fontWeight: 700, marginBottom: 6 }}>
+      School Dashboard — Admin wireframes
+    </div>
+    <div style={{ fontFamily: skFonts.handSm, fontSize: 14, color: sk.inkSoft, lineHeight: 1.5, maxWidth: 760 }}>
+      Round 1 of 3 — covering all 9 admin pages from the spec, plus their key modals & every UI state
+      (loading · empty · error · confirm · toast · denied). Heavy annotations: every visible field is tagged
+      with its DB column. Once you sign off on these, I'll do <b>Teacher</b> next, then <b>Student</b>.
+    </div>
+    <div style={{ marginTop: 14, display: "flex", gap: 14, fontFamily: skFonts.mono, fontSize: 11, color: sk.mute, flexWrap: "wrap" }}>
+      <span>· pan = drag empty space · zoom = scroll · click ⤢ to focus an artboard</span>
+    </div>
+  </div>
+);
+
+const ART_W = 1280;
+const ART_H = 820;
+const MODAL_W = 620;
+const MODAL_H = 720;
+const STATE_W = 760;
+const STATE_H = 560;
+
+const App = () => (
+  <DesignCanvas title="Admin — Sketch wireframes" intro={<Intro />}>
+
+    <DCSection id="overview" title="A1–A4 · Existing pages (refreshed)">
+      <DCArtboard id="a1" label="A1 · Dashboard" width={ART_W} height={ART_H}><A1 /></DCArtboard>
+      <DCArtboard id="a2" label="A2 · Classes (grid)" width={ART_W} height={ART_H}><A2 /></DCArtboard>
+      <DCArtboard id="a3" label="A3 · Students (table + filters)" width={ART_W} height={ART_H}><A3 /></DCArtboard>
+      <DCArtboard id="a3d" label="A3.1 · Student detail" width={ART_W} height={ART_H}><A3Detail /></DCArtboard>
+      <DCArtboard id="a4" label="A4 · Fees — Collect flow" width={ART_W} height={ART_H}><A4 /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="people" title="A5 · Teachers (NEW)">
+      <DCArtboard id="a5" label="A5 · Teachers list" width={ART_W} height={ART_H}><A5 /></DCArtboard>
+      <DCArtboard id="a5m" label="A5 modal · Add Teacher" width={MODAL_W} height={MODAL_H}><A5Modal /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="comm" title="A6 · Notices (NEW)">
+      <DCArtboard id="a6" label="A6 · Notices list" width={ART_W} height={ART_H}><A6 /></DCArtboard>
+      <DCArtboard id="a6m" label="A6 modal · Compose Notice" width={MODAL_W} height={MODAL_H}><A6Modal /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="exams" title="A7 · Exams & Results (NEW)">
+      <DCArtboard id="a7" label="A7 · Exam list (grouped)" width={ART_W} height={ART_H}><A7 /></DCArtboard>
+      <DCArtboard id="a7m" label="A7 modal · Create Exam" width={MODAL_W} height={MODAL_H}><A7Modal /></DCArtboard>
+      <DCArtboard id="a7d" label="A7 · Exam detail (admin read-only)" width={ART_W} height={ART_H}><A7Detail /></DCArtboard>
+      <DCArtboard id="a7r" label="A7 · Report Card" width={ART_W} height={ART_H}><A7ReportCard /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="msg" title="A8 · Messaging (NEW)">
+      <DCArtboard id="a8" label="A8 · Messages list (Sent · Scheduled · Drafts)" width={ART_W} height={ART_H}><A8 /></DCArtboard>
+      <DCArtboard id="a8m" label="A8 modal · Compose Message" width={MODAL_W} height={MODAL_H}><A8Modal /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="settings" title="A9 · Settings (NEW)">
+      <DCArtboard id="a9" label="A9 · Settings — Academic Years tab" width={ART_W} height={ART_H}><A9 /></DCArtboard>
+    </DCSection>
+
+    <DCSection id="states" title="UI states · applies to every page">
+      <DCArtboard id="sl" label="Loading · skeleton shimmer" width={STATE_W} height={STATE_H}><StateLoading /></DCArtboard>
+      <DCArtboard id="se" label="Empty state · friendly + CTA" width={STATE_W} height={STATE_H}><StateEmpty /></DCArtboard>
+      <DCArtboard id="sr" label="Error · retry inline" width={STATE_W} height={STATE_H}><StateError /></DCArtboard>
+      <DCArtboard id="sc" label="Confirm · destructive (Promote students)" width={MODAL_W} height={MODAL_H}><StateConfirm /></DCArtboard>
+      <DCArtboard id="st" label="Toast + Permission denied" width={STATE_W} height={STATE_H}><StateToastDenied /></DCArtboard>
+    </DCSection>
+
+  </DesignCanvas>
+);
+
+ReactDOM.createRoot(document.getElementById("root")).render(<><App /><TweaksUI /></>);
+</script>
+</body>
+</html>
