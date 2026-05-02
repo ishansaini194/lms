@@ -20,6 +20,4 @@ type ClassYear struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt time.Time `gorm:"index"`
-
-	School School `gorm:"foreignKey:SchoolID" json:"-"`
 }

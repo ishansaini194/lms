@@ -11,17 +11,18 @@ type Student struct {
 	Gender          *string    `gorm:"size:10" json:"gender,omitempty"`
 	DateOfBirth     *time.Time `gorm:"type:date" json:"dob,omitempty"`
 	Phone           *string    `gorm:"size:20" json:"phone,omitempty"`
-	AadharNumber    *string    `gorm:"size:20" json:"aadhar_no,omitempty"`
-	FatherName      *string    `gorm:"size:200" json:"father_name,omitempty"`
-	FatherContact   *string    `gorm:"size:20" json:"father_contact,omitempty"`
-	MotherName      *string    `gorm:"size:200" json:"mother_name,omitempty"`
-	MotherContact   *string    `gorm:"size:20" json:"mother_contact,omitempty"`
-	Caste           *string    `gorm:"size:50" json:"caste,omitempty"`
-	Email           *string    `gorm:"size:200" json:"email,omitempty"`
-	Address         *string    `gorm:"type:text" json:"address,omitempty"`
-	IsActive        bool       `gorm:"not null;default:true;index:idx_students_school_active,priority:2" json:"is_active"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
 
-	School School `gorm:"foreignKey:SchoolID" json:"-"`
+	AadharNumber  *string `gorm:"size:20" json:"aadhar_no,omitempty"`
+	FatherName    *string `gorm:"size:200" json:"father_name,omitempty"`
+	FatherContact *string `gorm:"size:20" json:"father_contact,omitempty"`
+	MotherName    *string `gorm:"size:200" json:"mother_name,omitempty"`
+	MotherContact *string `gorm:"size:20" json:"mother_contact,omitempty"`
+
+	Caste   *string `gorm:"size:50" json:"caste,omitempty"`
+	Email   *string `gorm:"size:200" json:"email,omitempty"`
+	Address *string `gorm:"type:text" json:"address,omitempty"`
+
+	IsActive  bool      `gorm:"not null;default:true;index:idx_students_school_active,priority:2" json:"is_active"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }

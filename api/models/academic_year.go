@@ -9,8 +9,7 @@ type AcademicYear struct {
 	StartDate time.Time `gorm:"type:date;not null" json:"start_date"`
 	EndDate   time.Time `gorm:"type:date;not null" json:"end_date"`
 	IsCurrent bool      `gorm:"not null;default:false" json:"is_current"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-
-	School School `gorm:"foreignKey:SchoolID" json:"-"`
 }

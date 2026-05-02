@@ -15,6 +15,4 @@ type Teacher struct {
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-
-	School School `gorm:"foreignKey:SchoolID" json:"-"`
 }
