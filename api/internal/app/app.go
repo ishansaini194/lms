@@ -5,10 +5,13 @@ import (
 	"github.com/ishansaini194/lms/api/internal/server"
 )
 
-func New() *server.Server {
-	database.Connect()
+func New() (*server.Server, error) {
+	db, err := database.Connect()
+	if err != nil {
+		return nil, err
+	}
 
-	srv := server.New()
+	srv := server.New(db)
 
-	return srv
+	return srv, nil
 }
