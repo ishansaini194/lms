@@ -7,7 +7,6 @@ import (
 
 func New() *server.Server {
 	database.Connect()
-	database.Run(database.DB)
 
 	srv := server.New()
 
