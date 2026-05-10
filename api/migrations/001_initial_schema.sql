@@ -268,3 +268,119 @@ CREATE TABLE
 CREATE INDEX idx_notices_school_created ON notices (school_id, created_at DESC);
 
 CREATE INDEX idx_notices_deleted_at ON notices (deleted_at);
+
+/ / notice_targets
+CREATE TABLE
+    notice_targets (
+        notice_id BIGINT NOT NULL REFERENCES notices (id) ON DELETE CASCADE,
+        class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE CASCADE,
+        PRIMARY KEY (notice_id, class_year_id)
+    );
+
+CREATE INDEX idx_notice_targets_class ON notice_targets (class_year_id);
+
+/ / homeworks
+CREATE TABLE
+    homeworks (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        teacher_id BIGINT NOT NULL REFERENCES teachers (id) ON DELETE RESTRICT,
+        subject VARCHAR(100) NOT NULL,
+        content TEXT NOT NULL,
+        due_date DATE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        deleted_at TIMESTAMPTZ
+    );
+
+CREATE INDEX idx_homeworks_school_due ON homeworks (school_id, due_date);
+
+CREATE INDEX idx_homeworks_deleted_at ON homeworks (deleted_at);
+
+/ / homework_targets
+CREATE TABLE
+    homework_targets (
+        homework_id BIGINT NOT NULL REFERENCES homeworks (id) ON DELETE CASCADE,
+        class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE CASCADE,
+        PRIMARY KEY (homework_id, class_year_id)
+    );
+
+CREATE INDEX idx_homework_targets_class ON homework_targets (class_year_id);
+
+/ / exams
+CREATE TABLE
+    exams (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE RESTRICT,
+        teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
+        name VARCHAR(100) NOT NULL,
+        subject VARCHAR(100) NOT NULL,
+        max_marks INTEGER NOT NULL,
+        exam_date DATE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        CHECK (max_marks > 0)
+    );
+
+CREATE INDEX idx_exams_school ON exams (school_id);
+
+CREATE INDEX idx_exams_class_year ON exams (class_year_id);
+
+/ / results
+CREATE TABLE
+    results (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        exam_id BIGINT NOT NULL REFERENCES exams (id) ON DELETE CASCADE,
+        enrollment_id BIGINT NOT NULL REFERENCES enrollments (id) ON DELETE RESTRICT,
+        marks NUMERIC(6, 2) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (exam_id, enrollment_id),
+        CHECK (marks >= 0)
+    );
+
+CREATE INDEX idx_results_school ON results (school_id);
+
+CREATE INDEX idx_results_enrollment ON results (enrollment_id);
+
+/ / assessments
+CREATE TABLE
+    assessments (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        exam_id BIGINT NOT NULL REFERENCES exams (id) ON DELETE CASCADE,
+        teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
+        name VARCHAR(100) NOT NULL,
+        max_marks INTEGER NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        CHECK (max_marks > 0)
+    );
+
+CREATE INDEX idx_assessments_school ON assessments (school_id);
+
+CREATE INDEX idx_assessments_exam ON assessments (exam_id);
+
+CREATE INDEX idx_assessments_teacher ON assessments (teacher_id);
+
+/ / assessment_marks
+CREATE TABLE
+    assessment_marks (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        assessment_id BIGINT NOT NULL REFERENCES assessments (id) ON DELETE CASCADE,
+        enrollment_id BIGINT NOT NULL REFERENCES enrollments (id) ON DELETE RESTRICT,
+        marks NUMERIC(6, 2) NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (assessment_id, enrollment_id),
+        CHECK (marks >= 0)
+    );
+
+CREATE INDEX idx_assessment_marks_school ON assessment_marks (school_id);
+
+CREATE INDEX idx_assessment_marks_enrollment ON assessment_marks (enrollment_id);
+
+/ / library_files
