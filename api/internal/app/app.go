@@ -31,4 +31,14 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	authGroup := api.Group("/auth", middleware.AuthRequired())
 	authGroup.Post("/change-password", authHandler.ChangePassword)
 	authGroup.Post("/reset-password/:id", authHandler.ResetPassword)
+
+	// Teacher routes
+	teacherHandler := handlers.NewTeachersHandler(db)
+
+	teachers := api.Group("/teachers", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	teachers.Get("/", teacherHandler.ListTeachers)
+	teachers.Get("/:id", teacherHandler.GetTeacher)
+	teachers.Post("/", teacherHandler.CreateTeacher)
+	teachers.Put("/:id", teacherHandler.UpdateTeacher)
+	teachers.Delete("/:id", teacherHandler.DeleteTeacher)
 }
