@@ -1,31 +1,4 @@
--- Foundation (no dependencies):
--- 1. schools
--- 2. academic_years  (depends on schools)
--- People (depend on schools):
--- 3. teachers
--- 4. students
--- 5. users           (depends on teachers, students)
--- Class structure:
--- 6. classes         (depends on schools)
--- 7. class_years     (depends on classes, academic_years, teachers)
--- 8. enrollments     (depends on students, class_years)
--- Fees:
--- 9. fees            (depends on enrollments)
--- 10. payments       (depends on fees)
--- 11. receipt_counters (depends on schools)
--- Academics:
--- 12. notices        (depends on users)
--- 13. notice_targets (depends on notices, class_years)
--- 14. homeworks      (depends on teachers)
--- 15. homework_targets (depends on homeworks, class_years)
--- 16. exams          (depends on class_years, teachers)
--- 17. results        (depends on exams, enrollments)
--- 18. assessments    (depends on exams, teachers)
--- 19. assessment_marks (depends on assessments, enrollments)
--- Library & Audit:
--- 20. library_files  (depends on users, academic_years)
--- 21. audit_logs     (depends on users)
-/ / Schools
+-- Schools
 CREATE TABLE
     schools (
         id BIGSERIAL PRIMARY KEY,
@@ -43,11 +16,11 @@ CREATE TABLE
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW ()
     );
 
-/ / Academic Years
+-- Academic Years
 CREATE TABLE
     academic_years (
         id BIGSERIAL PRIMARY KEY,
-        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE CASCADE,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         year_label VARCHAR(20) NOT NULL,
         start_date DATE NOT NULL,
         end_date DATE NOT NULL,
@@ -65,7 +38,7 @@ WHERE
 -- Speed index for school lookups
 CREATE INDEX idx_academic_years_school ON academic_years (school_id);
 
-/ / Teachers
+-- Teachers
 CREATE TABLE
     teachers (
         id BIGSERIAL PRIMARY KEY,
@@ -82,9 +55,9 @@ CREATE TABLE
         UNIQUE (school_id, employee_id)
     );
 
-CREATE INDEX idx_teachers_school ON teachers (school_id, is_active);
+CREATE INDEX idx_teachers_school_active ON teachers (school_id, is_active);
 
-/ / Students
+-- Students
 CREATE TABLE
     students (
         id BIGSERIAL PRIMARY KEY,
@@ -111,7 +84,7 @@ CREATE TABLE
 
 CREATE INDEX idx_students_school_active ON students (school_id, is_active);
 
-/ / Users
+-- Users
 CREATE TABLE
     users (
         id BIGSERIAL PRIMARY KEY,
@@ -134,7 +107,7 @@ CREATE TABLE
         )
     );
 
-/ / classes
+-- classes
 CREATE TABLE
     classes (
         id BIGSERIAL PRIMARY KEY,
@@ -150,7 +123,7 @@ CREATE TABLE
 
 CREATE INDEX idx_classes_deleted_at ON classes (deleted_at);
 
-/ / class_years
+-- class_years
 CREATE TABLE
     class_years (
         id BIGSERIAL PRIMARY KEY,
@@ -168,7 +141,7 @@ CREATE TABLE
 
 CREATE INDEX idx_class_years_deleted_at ON class_years (deleted_at);
 
-/ / enrollments
+-- enrollments
 CREATE TABLE
     enrollments (
         id BIGSERIAL PRIMARY KEY,
@@ -189,7 +162,7 @@ CREATE INDEX idx_enrollments_school ON enrollments (school_id);
 
 CREATE INDEX idx_enrollments_status ON enrollments (class_year_id, status);
 
-/ / fee
+-- fee
 CREATE TABLE
     fees (
         id BIGSERIAL PRIMARY KEY,
@@ -216,7 +189,7 @@ CREATE INDEX idx_fees_school ON fees (school_id);
 
 CREATE INDEX idx_fees_enrollment_status ON fees (enrollment_id, status);
 
-/ / payments
+-- payments
 CREATE TABLE
     payments (
         id BIGSERIAL PRIMARY KEY,
@@ -240,7 +213,7 @@ CREATE INDEX idx_payments_school_paid_at ON payments (school_id, paid_at DESC);
 
 CREATE INDEX idx_payments_fee ON payments (fee_id);
 
-/ / receipt_counters
+-- receipt_counters
 CREATE TABLE
     receipt_counters (
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
@@ -251,7 +224,7 @@ CREATE TABLE
         PRIMARY KEY (school_id, period_key)
     );
 
-/ / notices
+-- notices
 CREATE TABLE
     notices (
         id BIGSERIAL PRIMARY KEY,
@@ -269,7 +242,7 @@ CREATE INDEX idx_notices_school_created ON notices (school_id, created_at DESC);
 
 CREATE INDEX idx_notices_deleted_at ON notices (deleted_at);
 
-/ / notice_targets
+-- notice_targets
 CREATE TABLE
     notice_targets (
         notice_id BIGINT NOT NULL REFERENCES notices (id) ON DELETE CASCADE,
@@ -279,7 +252,7 @@ CREATE TABLE
 
 CREATE INDEX idx_notice_targets_class ON notice_targets (class_year_id);
 
-/ / homeworks
+-- homeworks
 CREATE TABLE
     homeworks (
         id BIGSERIAL PRIMARY KEY,
@@ -297,7 +270,7 @@ CREATE INDEX idx_homeworks_school_due ON homeworks (school_id, due_date);
 
 CREATE INDEX idx_homeworks_deleted_at ON homeworks (deleted_at);
 
-/ / homework_targets
+-- homework_targets
 CREATE TABLE
     homework_targets (
         homework_id BIGINT NOT NULL REFERENCES homeworks (id) ON DELETE CASCADE,
@@ -307,7 +280,7 @@ CREATE TABLE
 
 CREATE INDEX idx_homework_targets_class ON homework_targets (class_year_id);
 
-/ / exams
+-- exams
 CREATE TABLE
     exams (
         id BIGSERIAL PRIMARY KEY,
@@ -327,7 +300,7 @@ CREATE INDEX idx_exams_school ON exams (school_id);
 
 CREATE INDEX idx_exams_class_year ON exams (class_year_id);
 
-/ / results
+-- results
 CREATE TABLE
     results (
         id BIGSERIAL PRIMARY KEY,
@@ -345,7 +318,7 @@ CREATE INDEX idx_results_school ON results (school_id);
 
 CREATE INDEX idx_results_enrollment ON results (enrollment_id);
 
-/ / assessments
+-- assessments
 CREATE TABLE
     assessments (
         id BIGSERIAL PRIMARY KEY,
@@ -365,7 +338,7 @@ CREATE INDEX idx_assessments_exam ON assessments (exam_id);
 
 CREATE INDEX idx_assessments_teacher ON assessments (teacher_id);
 
-/ / assessment_marks
+-- assessment_marks
 CREATE TABLE
     assessment_marks (
         id BIGSERIAL PRIMARY KEY,
@@ -383,4 +356,48 @@ CREATE INDEX idx_assessment_marks_school ON assessment_marks (school_id);
 
 CREATE INDEX idx_assessment_marks_enrollment ON assessment_marks (enrollment_id);
 
-/ / library_files
+-- library_files
+CREATE TABLE
+    library_files (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        uploaded_by_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+        academic_year_id BIGINT REFERENCES academic_years (id) ON DELETE SET NULL,
+        category VARCHAR(50) NOT NULL,
+        subject VARCHAR(100),
+        class_number INTEGER,
+        title VARCHAR(200) NOT NULL,
+        description TEXT,
+        file_url VARCHAR(500) NOT NULL,
+        file_size BIGINT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW ()
+    );
+
+CREATE INDEX idx_library_files_school ON library_files (school_id);
+
+CREATE INDEX idx_library_files_school_category ON library_files (school_id, category);
+
+CREATE INDEX idx_library_files_class ON library_files (class_number);
+
+-- audit_logs
+CREATE TABLE
+    audit_logs (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        user_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+        action VARCHAR(50) NOT NULL,
+        entity_type VARCHAR(50) NOT NULL,
+        entity_id BIGINT NOT NULL,
+        before JSONB,
+        after JSONB,
+        reason TEXT,
+        ip_address VARCHAR(50),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW ()
+    );
+
+CREATE INDEX idx_audit_school_entity ON audit_logs (school_id, entity_type, entity_id);
+
+CREATE INDEX idx_audit_school_created ON audit_logs (school_id, created_at DESC);
+
+CREATE INDEX idx_audit_user ON audit_logs (user_id);
