@@ -14,6 +14,7 @@ type Fee struct {
 
 	Month          int             `gorm:"not null;uniqueIndex:idx_fees_enr_type_month" json:"month"`
 	Amount         decimal.Decimal `gorm:"type:numeric(10,2);not null" json:"amount"`
+	DueDate        time.Time       `gorm:"type:date;not null" json:"due_date"`
 	Discount       decimal.Decimal `gorm:"type:numeric(10,2);not null;default:0" json:"discount"`
 	DiscountReason *string         `gorm:"size:200" json:"discount_reason,omitempty"`
 

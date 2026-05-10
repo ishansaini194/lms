@@ -170,4 +170,101 @@ CREATE INDEX idx_class_years_deleted_at ON class_years (deleted_at);
 
 / / enrollments
 CREATE TABLE
-    
+    enrollments (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        student_id BIGINT NOT NULL REFERENCES students (id) ON DELETE RESTRICT,
+        class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE RESTRICT,
+        roll_number INTEGER NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'active',
+        left_on DATE,
+        left_reason TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (student_id, class_year_id),
+        UNIQUE (class_year_id, roll_number)
+    );
+
+CREATE INDEX idx_enrollments_school ON enrollments (school_id);
+
+CREATE INDEX idx_enrollments_status ON enrollments (class_year_id, status);
+
+/ / fee
+CREATE TABLE
+    fees (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        enrollment_id BIGINT NOT NULL REFERENCES enrollments (id) ON DELETE RESTRICT,
+        fee_type VARCHAR(20) NOT NULL,
+        month INTEGER NOT NULL,
+        amount NUMERIC(10, 2) NOT NULL,
+        due_date DATE NOT NULL,
+        discount NUMERIC(10, 2) NOT NULL DEFAULT 0,
+        discount_reason VARCHAR(200),
+        status VARCHAR(20) NOT NULL DEFAULT 'unpaid',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (enrollment_id, fee_type, month),
+        CHECK (month BETWEEN 1 AND 12),
+        CHECK (
+            discount >= 0
+            AND discount <= amount
+        )
+    );
+
+CREATE INDEX idx_fees_school ON fees (school_id);
+
+CREATE INDEX idx_fees_enrollment_status ON fees (enrollment_id, status);
+
+/ / payments
+CREATE TABLE
+    payments (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        fee_id BIGINT NOT NULL REFERENCES fees (id) ON DELETE RESTRICT,
+        receipt_no VARCHAR(50) NOT NULL,
+        amount NUMERIC(10, 2) NOT NULL,
+        payment_mode VARCHAR(20) NOT NULL,
+        paid_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        status VARCHAR(20) NOT NULL DEFAULT 'completed',
+        reversed_at TIMESTAMPTZ,
+        reversal_reason TEXT,
+        notes TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (school_id, receipt_no),
+        CHECK (amount > 0)
+    );
+
+CREATE INDEX idx_payments_school_paid_at ON payments (school_id, paid_at DESC);
+
+CREATE INDEX idx_payments_fee ON payments (fee_id);
+
+/ / receipt_counters
+CREATE TABLE
+    receipt_counters (
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        period_key VARCHAR(50) NOT NULL,
+        last_number INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        PRIMARY KEY (school_id, period_key)
+    );
+
+/ / notices
+CREATE TABLE
+    notices (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        posted_by_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+        title VARCHAR(200) NOT NULL,
+        body TEXT NOT NULL,
+        target_all_school BOOLEAN NOT NULL DEFAULT FALSE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        deleted_at TIMESTAMPTZ
+    );
+
+CREATE INDEX idx_notices_school_created ON notices (school_id, created_at DESC);
+
+CREATE INDEX idx_notices_deleted_at ON notices (deleted_at);
