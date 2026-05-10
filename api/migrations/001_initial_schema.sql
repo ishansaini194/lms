@@ -110,3 +110,64 @@ CREATE TABLE
     );
 
 CREATE INDEX idx_students_school_active ON students (school_id, is_active);
+
+/ / Users
+CREATE TABLE
+    users (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        username VARCHAR(100) NOT NULL,
+        password_hash VARCHAR(500) NOT NULL,
+        role VARCHAR(20) NOT NULL,
+        teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
+        student_id BIGINT REFERENCES students (id) ON DELETE SET NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        last_login_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (school_id, username),
+        CHECK (
+            NOT (
+                teacher_id IS NOT NULL
+                AND student_id IS NOT NULL
+            )
+        )
+    );
+
+/ / classes
+CREATE TABLE
+    classes (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        number INTEGER NOT NULL,
+        section VARCHAR(10) NOT NULL,
+        board VARCHAR(20),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        deleted_at TIMESTAMPTZ,
+        UNIQUE (school_id, number, section)
+    );
+
+CREATE INDEX idx_classes_deleted_at ON classes (deleted_at);
+
+/ / class_years
+CREATE TABLE
+    class_years (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        class_id BIGINT NOT NULL REFERENCES classes (id) ON DELETE RESTRICT,
+        academic_year_id BIGINT NOT NULL REFERENCES academic_years (id) ON DELETE RESTRICT,
+        class_teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
+        tuition_fee NUMERIC(10, 2) NOT NULL DEFAULT 0,
+        transport_fee NUMERIC(10, 2) NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        deleted_at TIMESTAMPTZ,
+        UNIQUE (class_id, academic_year_id)
+    );
+
+CREATE INDEX idx_class_years_deleted_at ON class_years (deleted_at);
+
+/ / enrollments
+CREATE TABLE
+    
