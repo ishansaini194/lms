@@ -117,11 +117,12 @@ CREATE TABLE
         board VARCHAR(20),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
-        deleted_at TIMESTAMPTZ,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         UNIQUE (school_id, number, section)
     );
 
-CREATE INDEX idx_classes_deleted_at ON classes (deleted_at);
+-- CREATE INDEX idx_classes_is_active ON classes (is_active);
+CREATE INDEX idx_classes_school_active ON classes (school_id, is_active);
 
 -- class_years
 CREATE TABLE
@@ -135,11 +136,12 @@ CREATE TABLE
         transport_fee NUMERIC(10, 2) NOT NULL DEFAULT 0,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
-        deleted_at TIMESTAMPTZ,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         UNIQUE (class_id, academic_year_id)
     );
 
-CREATE INDEX idx_class_years_deleted_at ON class_years (deleted_at);
+-- CREATE INDEX idx_class_years_deleted_at ON class_years (deleted_at);
+CREATE INDEX idx_class_years_school_active ON class_years (school_id, is_active);
 
 -- enrollments
 CREATE TABLE
@@ -148,14 +150,13 @@ CREATE TABLE
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         student_id BIGINT NOT NULL REFERENCES students (id) ON DELETE RESTRICT,
         class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE RESTRICT,
-        roll_number INTEGER NOT NULL,
         status VARCHAR(20) NOT NULL DEFAULT 'active',
         left_on DATE,
         left_reason TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         UNIQUE (student_id, class_year_id),
-        UNIQUE (class_year_id, roll_number)
+        CHECK (status IN ('active', 'left', 'graduated', 'transferred', 'promoted', 'repeating', 'expelled', 'suspended', 'withdrawn'))
     );
 
 CREATE INDEX idx_enrollments_school ON enrollments (school_id);
@@ -235,12 +236,10 @@ CREATE TABLE
         target_all_school BOOLEAN NOT NULL DEFAULT FALSE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
-        deleted_at TIMESTAMPTZ
+        is_active BOOLEAN NOT NULL DEFAULT TRUE
     );
 
 CREATE INDEX idx_notices_school_created ON notices (school_id, created_at DESC);
-
-CREATE INDEX idx_notices_deleted_at ON notices (deleted_at);
 
 -- notice_targets
 CREATE TABLE
@@ -263,12 +262,10 @@ CREATE TABLE
         due_date DATE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
-        deleted_at TIMESTAMPTZ
+        is_active BOOLEAN NOT NULL DEFAULT TRUE
     );
 
 CREATE INDEX idx_homeworks_school_due ON homeworks (school_id, due_date);
-
-CREATE INDEX idx_homeworks_deleted_at ON homeworks (deleted_at);
 
 -- homework_targets
 CREATE TABLE
