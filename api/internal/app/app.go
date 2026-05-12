@@ -41,4 +41,13 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	teachers.Post("/", teacherHandler.CreateTeacher)
 	teachers.Put("/:id", teacherHandler.UpdateTeacher)
 	teachers.Delete("/:id", teacherHandler.DeleteTeacher)
+
+	studentsHandler := handlers.NewStudentsHandler(db)
+
+	students := api.Group("/students", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	students.Get("/", studentsHandler.ListStudents)
+	students.Get("/:id", studentsHandler.GetStudent)
+	students.Post("/", studentsHandler.CreateStudent)
+	students.Put("/:id", studentsHandler.UpdateStudent)
+	students.Delete("/:id", studentsHandler.DeleteStudent)
 }

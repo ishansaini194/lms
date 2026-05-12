@@ -11,11 +11,11 @@ import (
 )
 
 type TeachersHandler struct {
-	*gorm.DB
+	DB *gorm.DB
 }
 
 func NewTeachersHandler(db *gorm.DB) *TeachersHandler {
-	return &TeachersHandler{db}
+	return &TeachersHandler{DB: db}
 }
 
 // GET /api/teachers
@@ -74,8 +74,8 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name, employee_id, username and password are required"})
 	}
 
-	if len(body.Password) < 8 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "password must be at least 8 characters"})
+	if len(body.Password) < 6 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "password must be at least 6 characters"})
 	}
 
 	hash, err := auth.HashPassword(body.Password)
