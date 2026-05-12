@@ -19,5 +19,5 @@ type ClassYear struct {
 
 	CreatedAt time.Time
 	UpdatedAt time.Time
-	DeletedAt time.Time `gorm:"index"`
+	IsActive  bool `gorm:"not null;default:true" json:"is_active"`
 }

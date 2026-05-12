@@ -198,7 +198,6 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 			SchoolID:    schoolID,
 			StudentID:   student.ID,
 			ClassYearID: body.ClassYearID,
-			RollNumber:  body.RollNumber,
 			Status:      "active",
 		}
 		if err := tx.Create(&enrollment).Error; err != nil {

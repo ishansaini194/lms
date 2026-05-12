@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type Notice struct {
@@ -15,7 +13,7 @@ type Notice struct {
 	Body            string `gorm:"type:text;not null" json:"body"`
 	TargetAllSchool bool   `gorm:"not null;default:false" json:"target_all_school"`
 
-	CreatedAt time.Time      `gorm:"index:idx_notices_school_created,priority:2,sort:desc" json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time `gorm:"index:idx_notices_school_created,priority:2,sort:desc" json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	IsActive  bool      `gorm:"not null;default:true" json:"is_active"`
 }

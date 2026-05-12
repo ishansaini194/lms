@@ -2,8 +2,6 @@ package models
 
 import (
 	"time"
-
-	"gorm.io/gorm"
 )
 
 type Homework struct {
@@ -15,7 +13,7 @@ type Homework struct {
 	Content string     `gorm:"type:text;not null" json:"content"`
 	DueDate *time.Time `gorm:"type:date;index:idx_homeworks_school_due,priority:2" json:"due_date,omitempty"`
 
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	IsActive  bool      `gorm:"not null;default:true" json:"is_active"`
 }
