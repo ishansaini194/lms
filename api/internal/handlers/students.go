@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -23,14 +25,12 @@ func NewStudentsHandler(db *gorm.DB) *StudentsHandler {
 func (h *StudentsHandler) ListStudents(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 
-	// Read query params
 	search := c.Query("search")
 	classYearID := c.QueryInt("class_year_id", 0)
-	includeInactive := c.Query("include_inactive") == "true"
+	includeInactive, _ := strconv.ParseBool(c.Query("include_inactive"))
 	page := c.QueryInt("page", 1)
 	limit := c.QueryInt("limit", 50)
 
-	// Safety bounds
 	if limit > 100 {
 		limit = 100
 	}
@@ -41,21 +41,17 @@ func (h *StudentsHandler) ListStudents(c *fiber.Ctx) error {
 		page = 1
 	}
 
-	// Base query — tenancy filter
 	query := h.DB.Model(&models.Student{}).Where("students.school_id = ?", schoolID)
 
-	// Active filter
 	if !includeInactive {
 		query = query.Where("students.is_active = ?", true)
 	}
 
-	// Class filter — join with enrollments
 	if classYearID > 0 {
 		query = query.Joins("JOIN enrollments ON enrollments.student_id = students.id").
 			Where("enrollments.class_year_id = ? AND enrollments.status = ?", classYearID, "active")
 	}
 
-	// Search filter — match across multiple fields
 	if search != "" {
 		searchTerm := "%" + search + "%"
 		query = query.Where(
@@ -64,20 +60,17 @@ func (h *StudentsHandler) ListStudents(c *fiber.Ctx) error {
 		)
 	}
 
-	// Count total matching records (before pagination)
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to count students"})
 	}
 
-	// Fetch paginated results
 	var students []models.Student
 	offset := (page - 1) * limit
 	if err := query.Order("students.name asc").Limit(limit).Offset(offset).Find(&students).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch students"})
 	}
 
-	// Calculate total pages
 	totalPages := int(total) / limit
 	if int(total)%limit > 0 {
 		totalPages++
@@ -94,8 +87,12 @@ func (h *StudentsHandler) ListStudents(c *fiber.Ctx) error {
 
 // GET /api/students/:id
 func (h *StudentsHandler) GetStudent(c *fiber.Ctx) error {
-	id := c.Params("id")
 	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid student id"})
+	}
 
 	var student models.Student
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&student).Error; err != nil {
@@ -115,10 +112,8 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 		AdmissionNumber string `json:"admission_no"`
 		Name            string `json:"name"`
 		Phone           string `json:"phone"`
-		Password        string `json:"password"`
 		ClassYearID     uint   `json:"class_year_id"`
 
-		// Optional fields
 		EpunjabID     *string    `json:"epunjab_id,omitempty"`
 		Gender        *string    `json:"gender,omitempty"`
 		DateOfBirth   *time.Time `json:"dob,omitempty"`
@@ -136,18 +131,18 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
 
-	// Validation
-	if body.Name == "" || body.AdmissionNumber == "" || body.Phone == "" || body.Password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name, admission_no, phone, password are required"})
+	body.Name = strings.TrimSpace(body.Name)
+	body.AdmissionNumber = strings.TrimSpace(body.AdmissionNumber)
+	body.Phone = strings.TrimSpace(body.Phone)
+
+	if body.Name == "" || body.AdmissionNumber == "" || body.Phone == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name, admission_no, and phone are required"})
 	}
 	if body.ClassYearID == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "class_year_id is required"})
 	}
-	if len(body.Password) < 6 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "password must be at least 6 characters"})
-	}
 
-	hash, err := auth.HashPassword(body.Password)
+	hash, err := auth.HashPassword(auth.DefaultPassword)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to hash password"})
 	}
@@ -175,12 +170,10 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 	var enrollment models.Enrollment
 
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
-		// 1. Create student
 		if err := tx.Create(&student).Error; err != nil {
 			return err
 		}
 
-		// 2. Create user account (username = admission_number)
 		user = models.User{
 			SchoolID:     schoolID,
 			Username:     body.AdmissionNumber,
@@ -193,22 +186,20 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 			return err
 		}
 
-		// 3. Create enrollment
 		enrollment = models.Enrollment{
 			SchoolID:    schoolID,
 			StudentID:   student.ID,
 			ClassYearID: body.ClassYearID,
 			Status:      "active",
 		}
-		if err := tx.Create(&enrollment).Error; err != nil {
-			return err
-		}
-
-		return nil
+		return tx.Create(&enrollment).Error
 	})
 
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create student (admission_number, username, or roll_number may already exist)"})
+		if isUniqueViolation(err) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "admission_no or epunjab_id already exists"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create student"})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
@@ -218,15 +209,19 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 		"enrollment_id": enrollment.ID,
 		"login_info": fiber.Map{
 			"username": body.AdmissionNumber,
-			"password": body.Password,
+			"password": auth.DefaultPassword,
 		},
 	})
 }
 
 // PUT /api/students/:id
 func (h *StudentsHandler) UpdateStudent(c *fiber.Ctx) error {
-	id := c.Params("id")
 	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid student id"})
+	}
 
 	var student models.Student
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&student).Error; err != nil {
@@ -251,12 +246,71 @@ func (h *StudentsHandler) UpdateStudent(c *fiber.Ctx) error {
 		Address       *string    `json:"address,omitempty"`
 		EpunjabID     *string    `json:"epunjab_id,omitempty"`
 	}
+
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
 
-	if err := h.DB.Model(&student).Updates(body).Error; err != nil {
+	updates := map[string]interface{}{}
+
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		if trimmed == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name cannot be empty"})
+		}
+		updates["name"] = trimmed
+	}
+
+	if body.Gender != nil {
+		updates["gender"] = body.Gender
+	}
+	if body.DateOfBirth != nil {
+		updates["date_of_birth"] = body.DateOfBirth
+	}
+	if body.Phone != nil {
+		updates["phone"] = body.Phone
+	}
+	if body.AadharNumber != nil {
+		updates["aadhar_number"] = body.AadharNumber
+	}
+	if body.FatherName != nil {
+		updates["father_name"] = body.FatherName
+	}
+	if body.FatherContact != nil {
+		updates["father_contact"] = body.FatherContact
+	}
+	if body.MotherName != nil {
+		updates["mother_name"] = body.MotherName
+	}
+	if body.MotherContact != nil {
+		updates["mother_contact"] = body.MotherContact
+	}
+	if body.Caste != nil {
+		updates["caste"] = body.Caste
+	}
+	if body.Email != nil {
+		updates["email"] = body.Email
+	}
+	if body.Address != nil {
+		updates["address"] = body.Address
+	}
+	if body.EpunjabID != nil {
+		updates["epunjab_id"] = body.EpunjabID
+	}
+
+	if len(updates) == 0 {
+		return c.JSON(student)
+	}
+
+	if err := h.DB.Model(&student).Updates(updates).Error; err != nil {
+		if isUniqueViolation(err) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "epunjab_id already exists"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update failed"})
+	}
+
+	if err := h.DB.First(&student, student.ID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update succeeded but reload failed"})
 	}
 
 	return c.JSON(student)
@@ -264,31 +318,27 @@ func (h *StudentsHandler) UpdateStudent(c *fiber.Ctx) error {
 
 // DELETE /api/students/:id
 func (h *StudentsHandler) DeleteStudent(c *fiber.Ctx) error {
-	id := c.Params("id")
 	schoolID := middleware.GetSchoolID(c)
 
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		// Step 1: Deactivate the student
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid student id"})
+	}
+
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.Student{}).
 			Where("id = ? AND school_id = ?", id, schoolID).
 			Update("is_active", false)
-
 		if result.Error != nil {
 			return result.Error
 		}
-
 		if result.RowsAffected == 0 {
 			return gorm.ErrRecordNotFound
 		}
 
-		// Step 2: Deactivate the linked user account
-		if err := tx.Model(&models.User{}).
+		return tx.Model(&models.User{}).
 			Where("student_id = ? AND school_id = ?", id, schoolID).
-			Update("is_active", false).Error; err != nil {
-			return err
-		}
-
-		return nil
+			Update("is_active", false).Error
 	})
 
 	if err != nil {

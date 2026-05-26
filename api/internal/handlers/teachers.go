@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"errors"
+	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/auth"
@@ -21,8 +23,7 @@ func NewTeachersHandler(db *gorm.DB) *TeachersHandler {
 // GET /api/teachers
 func (h *TeachersHandler) ListTeachers(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
-
-	includeInactive := c.Query("include_inactive") == "true"
+	includeInactive, _ := strconv.ParseBool(c.Query("include_inactive"))
 
 	query := h.DB.Where("school_id = ?", schoolID)
 	if !includeInactive {
@@ -31,15 +32,19 @@ func (h *TeachersHandler) ListTeachers(c *fiber.Ctx) error {
 
 	var teachers []models.Teacher
 	if err := query.Order("name asc").Find(&teachers).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "error fetching teachers"})
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch teachers"})
 	}
 	return c.JSON(teachers)
 }
 
 // GET /api/teachers/:id
 func (h *TeachersHandler) GetTeacher(c *fiber.Ctx) error {
-	id := c.Params("id")
 	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid teacher id"})
+	}
 
 	var teacher models.Teacher
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&teacher).Error; err != nil {
@@ -64,21 +69,25 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 		Subject       string `json:"subject"`
 		Qualification string `json:"qualification"`
 		Username      string `json:"username"`
-		Password      string `json:"password"`
 	}
+
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
 
-	if body.Name == "" || body.EmployeeID == "" || body.Username == "" || body.Password == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name, employee_id, username and password are required"})
+	body.Name = strings.TrimSpace(body.Name)
+	body.EmployeeID = strings.TrimSpace(body.EmployeeID)
+	body.Username = strings.TrimSpace(body.Username)
+	body.Phone = strings.TrimSpace(body.Phone)
+	body.Email = strings.TrimSpace(body.Email)
+	body.Subject = strings.TrimSpace(body.Subject)
+	body.Qualification = strings.TrimSpace(body.Qualification)
+
+	if body.Name == "" || body.EmployeeID == "" || body.Username == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name, employee_id, and username are required"})
 	}
 
-	if len(body.Password) < 6 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "password must be at least 6 characters"})
-	}
-
-	hash, err := auth.HashPassword(body.Password)
+	hash, err := auth.HashPassword(auth.DefaultPassword)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to hash password"})
 	}
@@ -107,27 +116,35 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 			return err
 		}
 		user.TeacherID = &teacher.ID
-		if err := tx.Create(&user).Error; err != nil {
-			return err
-		}
-		return nil
+		return tx.Create(&user).Error
 	})
 
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create teacher (username or employee_id may already exist)"})
+		if isUniqueViolation(err) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "username or employee_id already exists"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create teacher"})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
 		"message":    "teacher created",
 		"teacher_id": teacher.ID,
 		"user_id":    user.ID,
+		"login_info": fiber.Map{
+			"username": body.Username,
+			"password": auth.DefaultPassword,
+		},
 	})
 }
 
 // PUT /api/teachers/:id
 func (h *TeachersHandler) UpdateTeacher(c *fiber.Ctx) error {
-	id := c.Params("id")
 	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid teacher id"})
+	}
 
 	var teacher models.Teacher
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&teacher).Error; err != nil {
@@ -138,18 +155,52 @@ func (h *TeachersHandler) UpdateTeacher(c *fiber.Ctx) error {
 	}
 
 	var body struct {
-		Name          string `json:"name"`
-		Phone         string `json:"phone"`
-		Email         string `json:"email"`
-		Subject       string `json:"subject"`
-		Qualification string `json:"qualification"`
+		Name          *string `json:"name,omitempty"`
+		Phone         *string `json:"phone,omitempty"`
+		Email         *string `json:"email,omitempty"`
+		Subject       *string `json:"subject,omitempty"`
+		Qualification *string `json:"qualification,omitempty"`
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
 
-	if err := h.DB.Model(&teacher).Updates(body).Error; err != nil {
+	updates := map[string]interface{}{}
+
+	if body.Name != nil {
+		trimmed := strings.TrimSpace(*body.Name)
+		if trimmed == "" {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name cannot be empty"})
+		}
+		updates["name"] = trimmed
+	}
+
+	if body.Phone != nil {
+		updates["phone"] = *body.Phone
+	}
+	if body.Email != nil {
+		updates["email"] = *body.Email
+	}
+	if body.Subject != nil {
+		updates["subject"] = *body.Subject
+	}
+	if body.Qualification != nil {
+		updates["qualification"] = *body.Qualification
+	}
+
+	if len(updates) == 0 {
+		return c.JSON(teacher) // nothing to update; return current state
+	}
+
+	if err := h.DB.Model(&teacher).Updates(updates).Error; err != nil {
+		if isUniqueViolation(err) {
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "employee_id already exists"})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update failed"})
+	}
+
+	if err := h.DB.First(&teacher, teacher.ID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update succeeded but reload failed"})
 	}
 
 	return c.JSON(teacher)
@@ -157,16 +208,17 @@ func (h *TeachersHandler) UpdateTeacher(c *fiber.Ctx) error {
 
 // DELETE /api/teachers/:id
 func (h *TeachersHandler) DeleteTeacher(c *fiber.Ctx) error {
-	id := c.Params("id")
 	schoolID := middleware.GetSchoolID(c)
 
-	// Use a transaction so both updates happen together (or neither)
-	err := h.DB.Transaction(func(tx *gorm.DB) error {
-		// Step 1: Deactivate the teacher
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid teacher id"})
+	}
+
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		result := tx.Model(&models.Teacher{}).
 			Where("id = ? AND school_id = ?", id, schoolID).
 			Update("is_active", false)
-
 		if result.Error != nil {
 			return result.Error
 		}
@@ -174,14 +226,9 @@ func (h *TeachersHandler) DeleteTeacher(c *fiber.Ctx) error {
 			return gorm.ErrRecordNotFound
 		}
 
-		// Step 2: Deactivate the linked user account
-		if err := tx.Model(&models.User{}).
+		return tx.Model(&models.User{}).
 			Where("teacher_id = ? AND school_id = ?", id, schoolID).
-			Update("is_active", false).Error; err != nil {
-			return err
-		}
-
-		return nil
+			Update("is_active", false).Error
 	})
 
 	if err != nil {
