@@ -20,19 +20,20 @@ func New() (*server.Server, error) {
 }
 
 func registerRoutes(srv *server.Server, db *gorm.DB) {
-	authHandler := handlers.NewAuthHandler(db)
-
 	api := srv.App.Group("/api")
 
-	// Public routes
+	// ---------- Public routes ----------
+	authHandler := handlers.NewAuthHandler(db)
 	api.Post("/login", authHandler.Login)
 
-	// Protected routes
+	// ---------- Authenticated routes (any role) ----------
 	authGroup := api.Group("/auth", middleware.AuthRequired())
 	authGroup.Post("/change-password", authHandler.ChangePassword)
 	authGroup.Post("/reset-password/:id", authHandler.ResetPassword)
 
-	// Teacher routes
+	// ---------- Admin-only routes ----------
+
+	// Teachers
 	teacherHandler := handlers.NewTeachersHandler(db)
 
 	teachers := api.Group("/teachers", middleware.AuthRequired(), middleware.RequireRole("admin"))
@@ -42,6 +43,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	teachers.Put("/:id", teacherHandler.UpdateTeacher)
 	teachers.Delete("/:id", teacherHandler.DeleteTeacher)
 
+	// Students
 	studentsHandler := handlers.NewStudentsHandler(db)
 
 	students := api.Group("/students", middleware.AuthRequired(), middleware.RequireRole("admin"))
@@ -50,4 +52,34 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	students.Post("/", studentsHandler.CreateStudent)
 	students.Put("/:id", studentsHandler.UpdateStudent)
 	students.Delete("/:id", studentsHandler.DeleteStudent)
+
+	// Academic Years (no DELETE — edit only)
+	academicYearHandler := handlers.NewAcademicYearHandler(db)
+
+	academicYears := api.Group("/academic-years", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	academicYears.Get("/", academicYearHandler.List)
+	academicYears.Get("/:id", academicYearHandler.GetOne)
+	academicYears.Post("/", academicYearHandler.Create)
+	academicYears.Put("/:id", academicYearHandler.Update)
+
+	// Classes (Delete + Reorder deferred until class_years exists — done now, so add them)
+	classHandler := handlers.NewClassHandler(db)
+
+	classes := api.Group("/classes", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	classes.Get("/", classHandler.List)
+	classes.Get("/:id", classHandler.GetOne)
+	classes.Post("/", classHandler.Create)
+	classes.Put("/:id", classHandler.Update)
+	// classes.Put("/reorder", classHandler.Reorder)   // not built yet — uncomment when ready
+	// classes.Delete("/:id", classHandler.Delete)    // not built yet — uncomment when ready
+
+	// Class Years
+	classYearHandler := handlers.NewClassYearHandler(db)
+
+	classYears := api.Group("/class-years", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	classYears.Get("/", classYearHandler.List)
+	classYears.Get("/:id", classYearHandler.GetOne)
+	classYears.Post("/", classYearHandler.Create)
+	classYears.Put("/:id", classYearHandler.Update)
+	classYears.Delete("/:id", classYearHandler.Delete)
 }
