@@ -156,7 +156,7 @@ CREATE TABLE
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         UNIQUE (student_id, class_year_id),
-        CHECK (status IN ('active', 'left', 'graduated', 'transferred', 'promoted', 'repeating', 'expelled', 'suspended', 'withdrawn'))
+        CHECK (status IN ('active', 'left', 'graduated', 'promoted'))
     );
 
 CREATE INDEX idx_enrollments_school ON enrollments (school_id);
