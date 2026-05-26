@@ -112,17 +112,19 @@ CREATE TABLE
     classes (
         id BIGSERIAL PRIMARY KEY,
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
-        number INTEGER NOT NULL,
+        name VARCHAR(20) NOT NULL,
         section VARCHAR(10) NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
         board VARCHAR(20),
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        UNIQUE (school_id, number, section)
+        UNIQUE (school_id, name, section)
     );
 
--- CREATE INDEX idx_classes_is_active ON classes (is_active);
 CREATE INDEX idx_classes_school_active ON classes (school_id, is_active);
+
+CREATE INDEX idx_classes_school_sort ON classes (school_id, sort_order);
 
 -- class_years
 CREATE TABLE
@@ -156,7 +158,9 @@ CREATE TABLE
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         UNIQUE (student_id, class_year_id),
-        CHECK (status IN ('active', 'left', 'graduated', 'promoted'))
+        CHECK (
+            status IN ('active', 'left', 'graduated', 'promoted')
+        )
     );
 
 CREATE INDEX idx_enrollments_school ON enrollments (school_id);

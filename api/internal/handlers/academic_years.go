@@ -41,7 +41,7 @@ func (h *AcademicYearHandler) GetOne(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 
 	id, err := strconv.Atoi(c.Params("id"))
-	if err != nil {
+	if err != nil || id <= 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid academic year ID")
 	}
 
@@ -107,7 +107,7 @@ func (h *AcademicYearHandler) Update(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 
 	id, err := strconv.Atoi(c.Params("id"))
-	if err != nil {
+	if err != nil || id <= 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "Invalid academic year ID")
 	}
 
