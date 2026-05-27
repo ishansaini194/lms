@@ -82,4 +82,13 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	classYears.Post("/", classYearHandler.Create)
 	classYears.Put("/:id", classYearHandler.Update)
 	classYears.Delete("/:id", classYearHandler.Delete)
+
+	// Enrollments
+	enrollmentHandler := handlers.NewEnrollmentsHandler(db)
+
+	enrollments := api.Group("/enrollments", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	enrollments.Get("/", enrollmentHandler.List)
+	enrollments.Get("/:id", enrollmentHandler.GetOne)
+	enrollments.Put("/:id", enrollmentHandler.Update)
+	enrollments.Post("/promote", enrollmentHandler.Promote)
 }
