@@ -135,4 +135,13 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	assessments.Delete("/:id", assessmentsHandler.Delete)
 	assessments.Post("/:id/marks", assessmentsHandler.EnterMarks)
 	assessments.Get("/:id/marks", assessmentsHandler.ListMarks)
+
+	// Library
+	libraryHandler := handlers.NewLibraryHandler(db, "uploads/library")
+
+	library := api.Group("/library", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	library.Get("/", libraryHandler.List)
+	library.Post("/", libraryHandler.Upload)
+	library.Get("/:id/download", libraryHandler.Download)
+	library.Delete("/:id", libraryHandler.Delete)
 }
