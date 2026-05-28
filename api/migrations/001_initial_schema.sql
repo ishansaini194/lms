@@ -234,7 +234,7 @@ CREATE TABLE
     notices (
         id BIGSERIAL PRIMARY KEY,
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
-        posted_by_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
+        posted_by_id BIGINT NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
         title VARCHAR(200) NOT NULL,
         body TEXT NOT NULL,
         target_all_school BOOLEAN NOT NULL DEFAULT FALSE,
