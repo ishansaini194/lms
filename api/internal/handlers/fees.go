@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
+	feegen "github.com/ishansaini194/lms/api/internal/services"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -453,4 +454,33 @@ func defaultDueDate(month int, yearStart time.Time) time.Time {
 	}
 	// time.Date normalizes month+1 == 13 into January of year+1 automatically.
 	return time.Date(year, time.Month(month+1), 10, 0, 0, 0, 0, time.UTC)
+}
+
+// POST /api/fees/generate  body: {"month": 4, "academic_year_id": 1}
+// Runs monthly fee generation on demand (testing / catch-up).
+func (h *FeesHandler) Generate(c *fiber.Ctx) error {
+	schoolID := middleware.GetSchoolID(c)
+
+	var body struct {
+		Month          int  `json:"month"`
+		AcademicYearID uint `json:"academic_year_id"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	if body.Month < 1 || body.Month > 12 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "month must be between 1 and 12"})
+	}
+	if body.AcademicYearID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "academic_year_id is required"})
+	}
+
+	res, err := feegen.GenerateForMonth(h.DB, schoolID, body.AcademicYearID, body.Month)
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "academic_year not found in this school"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "generation failed"})
+	}
+	return c.JSON(res)
 }

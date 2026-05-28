@@ -160,4 +160,14 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	library.Post("/", libraryHandler.Upload)
 	library.Get("/:id/download", libraryHandler.Download)
 	library.Delete("/:id", libraryHandler.Delete)
+
+	// Fees
+	feesHandler := handlers.NewFeesHandler(db)
+
+	fees := api.Group("/fees", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	fees.Post("/generate", feesHandler.Generate) // before /:id routes
+	fees.Get("/", feesHandler.List)
+	fees.Get("/:id", feesHandler.GetOne)
+	fees.Post("/", feesHandler.Create)
+	fees.Put("/:id", feesHandler.Update)
 }
