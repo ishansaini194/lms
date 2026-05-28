@@ -12,6 +12,7 @@ type Exam struct {
 	Subject  string     `gorm:"size:100;not null" json:"subject"`
 	MaxMarks int        `gorm:"not null" json:"max_marks"`
 	ExamDate *time.Time `gorm:"type:date" json:"exam_date,omitempty"`
+	IsActive bool       `gorm:"not null;default:true" json:"is_active"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`

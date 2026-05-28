@@ -111,4 +111,28 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	homeworks.Post("/", homeworksHandler.Create)
 	homeworks.Put("/:id", homeworksHandler.Update)
 	homeworks.Delete("/:id", homeworksHandler.Delete)
+
+	// Exams
+	examsHandler := handlers.NewExamsHandler(db)
+
+	exams := api.Group("/exams", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	exams.Get("/", examsHandler.List)
+	exams.Get("/:id", examsHandler.GetOne)
+	exams.Post("/", examsHandler.Create)
+	exams.Put("/:id", examsHandler.Update)
+	exams.Delete("/:id", examsHandler.Delete)
+	exams.Post("/:id/results", examsHandler.EnterResults)
+	exams.Get("/:id/results", examsHandler.ListResults)
+
+	// Assessments
+	assessmentsHandler := handlers.NewAssessmentsHandler(db)
+
+	assessments := api.Group("/assessments", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	assessments.Get("/", assessmentsHandler.List)
+	assessments.Get("/:id", assessmentsHandler.GetOne)
+	assessments.Post("/", assessmentsHandler.Create)
+	assessments.Put("/:id", assessmentsHandler.Update)
+	assessments.Delete("/:id", assessmentsHandler.Delete)
+	assessments.Post("/:id/marks", assessmentsHandler.EnterMarks)
+	assessments.Get("/:id/marks", assessmentsHandler.ListMarks)
 }

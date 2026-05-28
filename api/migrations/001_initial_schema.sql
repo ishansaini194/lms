@@ -292,12 +292,15 @@ CREATE TABLE
         subject VARCHAR(100) NOT NULL,
         max_marks INTEGER NOT NULL,
         exam_date DATE,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         CHECK (max_marks > 0)
     );
 
 CREATE INDEX idx_exams_school ON exams (school_id);
+
+CREATE INDEX idx_exams_school_active ON exams (school_id, is_active);
 
 CREATE INDEX idx_exams_class_year ON exams (class_year_id);
 
@@ -325,8 +328,9 @@ CREATE TABLE
         id BIGSERIAL PRIMARY KEY,
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         exam_id BIGINT NOT NULL REFERENCES exams (id) ON DELETE CASCADE,
-        teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
+        teacher_id BIGINT NOT NULL REFERENCES teachers (id) ON DELETE RESTRICT,
         name VARCHAR(100) NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
         max_marks INTEGER NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
@@ -338,6 +342,8 @@ CREATE INDEX idx_assessments_school ON assessments (school_id);
 CREATE INDEX idx_assessments_exam ON assessments (exam_id);
 
 CREATE INDEX idx_assessments_teacher ON assessments (teacher_id);
+
+CREATE INDEX idx_assessments_school_active ON assessments (school_id, is_active);
 
 -- assessment_marks
 CREATE TABLE

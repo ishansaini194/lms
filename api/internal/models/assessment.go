@@ -10,6 +10,7 @@ type Assessment struct {
 
 	Name     string `gorm:"size:100;not null" json:"name"`
 	MaxMarks int    `gorm:"not null" json:"max_marks"`
+	IsActive bool   `gorm:"not null;default:true" json:"is_active"`
 
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
