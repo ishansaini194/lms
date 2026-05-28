@@ -18,7 +18,15 @@ type Fee struct {
 	Discount       decimal.Decimal `gorm:"type:numeric(10,2);not null;default:0" json:"discount"`
 	DiscountReason *string         `gorm:"size:200" json:"discount_reason,omitempty"`
 
+	Payments  []Payment       `gorm:"foreignKey:FeeID" json:"payments,omitempty"`
+	NetAmount decimal.Decimal `gorm:"-" json:"net_amount"`
+
 	Status    string    `gorm:"size:20;not null;default:'unpaid';index:idx_fees_enr_status,priority:2" json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+var validFeeTypes = map[string]bool{
+	"tuition": true, "transport": true, "admission": true,
+	"exam": true, "books": true, "uniform": true, "late_fee": true,
 }
