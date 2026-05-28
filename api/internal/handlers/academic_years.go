@@ -32,7 +32,7 @@ func (h *AcademicYearHandler) List(c *fiber.Ctx) error {
 	if err := h.DB.Where("school_id = ?", schoolID).
 		Order("start_date DESC").
 		Find(&academicYears).Error; err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to fetch academic years")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch academic years"})
 	}
 	return c.JSON(academicYears)
 }
@@ -42,16 +42,16 @@ func (h *AcademicYearHandler) GetOne(c *fiber.Ctx) error {
 
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil || id <= 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid academic year ID")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid academic year ID"})
 	}
 
 	var academicYear models.AcademicYear
 	if err := h.DB.Where("school_id = ? AND id = ?", schoolID, id).
 		First(&academicYear).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fiber.NewError(fiber.StatusNotFound, "Academic year not found")
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Academic year not found"})
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to fetch academic year")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch academic year"})
 	}
 
 	return c.JSON(academicYear)
@@ -62,14 +62,14 @@ func (h *AcademicYearHandler) Create(c *fiber.Ctx) error {
 
 	var req AcademicYearRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
 	if req.YearLabel == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "year_label is required")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "year_label is required"})
 	}
 	if !req.EndDate.After(req.StartDate) {
-		return fiber.NewError(fiber.StatusBadRequest, "end_date must be after start_date")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "end_date must be after start_date"})
 	}
 
 	var academicYear models.AcademicYear
@@ -95,9 +95,9 @@ func (h *AcademicYearHandler) Create(c *fiber.Ctx) error {
 
 	if err != nil {
 		if isUniqueViolation(err) {
-			return fiber.NewError(fiber.StatusConflict, "Academic year already exists")
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Academic year already exists"})
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to create academic year")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to create academic year"})
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(academicYear)
@@ -108,19 +108,19 @@ func (h *AcademicYearHandler) Update(c *fiber.Ctx) error {
 
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil || id <= 0 {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid academic year ID")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid academic year ID"})
 	}
 
 	var req AcademicYearRequest
 	if err := c.BodyParser(&req); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "Invalid request body")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request body"})
 	}
 
 	if req.YearLabel == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "year_label is required")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "year_label is required"})
 	}
 	if !req.EndDate.After(req.StartDate) {
-		return fiber.NewError(fiber.StatusBadRequest, "end_date must be after start_date")
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "end_date must be after start_date"})
 	}
 
 	// Fetch the existing row to confirm it exists and belongs to this school
@@ -128,9 +128,9 @@ func (h *AcademicYearHandler) Update(c *fiber.Ctx) error {
 	if err := h.DB.Where("school_id = ? AND id = ?", schoolID, id).
 		First(&academicYear).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return fiber.NewError(fiber.StatusNotFound, "Academic year not found")
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Academic year not found"})
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to fetch academic year")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch academic year"})
 	}
 
 	// Update in a transaction
@@ -155,9 +155,9 @@ func (h *AcademicYearHandler) Update(c *fiber.Ctx) error {
 
 	if err != nil {
 		if isUniqueViolation(err) {
-			return fiber.NewError(fiber.StatusConflict, "Academic year already exists")
+			return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Academic year already exists"})
 		}
-		return fiber.NewError(fiber.StatusInternalServerError, "Failed to update academic year")
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to update academic year"})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(academicYear)

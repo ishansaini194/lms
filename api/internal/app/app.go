@@ -62,7 +62,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	academicYears.Post("/", academicYearHandler.Create)
 	academicYears.Put("/:id", academicYearHandler.Update)
 
-	// Classes (Delete + Reorder deferred until class_years exists — done now, so add them)
+	// Classes
 	classHandler := handlers.NewClassHandler(db)
 
 	classes := api.Group("/classes", middleware.AuthRequired(), middleware.RequireRole("admin"))
@@ -70,8 +70,8 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	classes.Get("/:id", classHandler.GetOne)
 	classes.Post("/", classHandler.Create)
 	classes.Put("/:id", classHandler.Update)
-	// classes.Put("/reorder", classHandler.Reorder)   // not built yet — uncomment when ready
-	// classes.Delete("/:id", classHandler.Delete)    // not built yet — uncomment when ready
+	classes.Delete("/:id", classHandler.Delete)
+	classes.Patch("/reorder", classHandler.Reorder)
 
 	// Class Years
 	classYearHandler := handlers.NewClassYearHandler(db)
