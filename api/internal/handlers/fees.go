@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
+	"github.com/ishansaini194/lms/api/internal/services"
 	feegen "github.com/ishansaini194/lms/api/internal/services"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -308,6 +309,14 @@ func (h *FeesHandler) Update(c *fiber.Ctx) error {
 			return err
 		}
 
+		beforeSnapshot := map[string]interface{}{
+			"amount":          fee.Amount.String(),
+			"discount":        fee.Discount.String(),
+			"status":          fee.Status,
+			"due_date":        fee.DueDate,
+			"discount_reason": fee.DiscountReason,
+		}
+
 		// Start from current values; override with any provided fields.
 		newAmount := fee.Amount
 		newDiscount := fee.Discount
@@ -378,7 +387,22 @@ func (h *FeesHandler) Update(c *fiber.Ctx) error {
 			return err
 		}
 
+		ev := auditCtx(c)
+		ev.Action = "update"
+		ev.EntityType = "fee"
+		ev.EntityID = fee.ID
+		ev.Before = beforeSnapshot
+		ev.After = map[string]interface{}{
+			"amount":   newAmount.String(),
+			"discount": newDiscount.String(),
+			"status":   newStatus,
+		}
+		if err := services.Log(tx, ev); err != nil {
+			return err
+		}
+
 		return nil
+
 	})
 
 	if err != nil {

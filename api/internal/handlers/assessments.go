@@ -60,6 +60,9 @@ func (h *AssessmentsHandler) List(c *fiber.Ctx) error {
 	if teacherID > 0 {
 		query = query.Where("teacher_id = ?", teacherID)
 	}
+	if isTeacher(c) {
+		query = query.Where("teacher_id = ?", middleware.GetTeacherID(c))
+	}
 
 	var assessments []models.Assessment
 	if err := query.Order("id DESC").Find(&assessments).Error; err != nil {
@@ -83,6 +86,11 @@ func (h *AssessmentsHandler) GetOne(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
+	if isTeacher(c) {
+		if a.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
+		}
+	}
 	return c.JSON(a)
 }
 
@@ -98,7 +106,10 @@ func (h *AssessmentsHandler) Create(c *fiber.Ctx) error {
 	if body.ExamID == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "exam_id is required"})
 	}
-	if body.TeacherID == 0 {
+	// Teacher creating: force to themselves. Admin: must provide a valid teacher_id.
+	if isTeacher(c) {
+		body.TeacherID = middleware.GetTeacherID(c)
+	} else if body.TeacherID == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher_id is required"})
 	}
 	body.Name = strings.TrimSpace(body.Name)
@@ -112,6 +123,12 @@ func (h *AssessmentsHandler) Create(c *fiber.Ctx) error {
 	// exam belongs to school
 	if err := h.validateExam(body.ExamID, schoolID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "exam not found in this school"})
+	}
+	// Teacher can only create assessments under their own exam
+	if isTeacher(c) {
+		if !teacherOwnsExam(h.DB, middleware.GetTeacherID(c), body.ExamID, schoolID) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "you can only add assessments to your own exams"})
+		}
 	}
 	// teacher belongs to school
 	if err := h.validateTeacher(body.TeacherID, schoolID); err != nil {
@@ -151,6 +168,11 @@ func (h *AssessmentsHandler) Update(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if a.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
+		}
 	}
 
 	updates := map[string]interface{}{}
@@ -217,6 +239,11 @@ func (h *AssessmentsHandler) Delete(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
+	if isTeacher(c) {
+		if a.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
+		}
+	}
 	if err := h.DB.Model(&a).Update("is_active", false).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete assessment"})
 	}
@@ -245,6 +272,11 @@ func (h *AssessmentsHandler) EnterMarks(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if a.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
+		}
 	}
 	maxMarks := decimal.NewFromInt(int64(a.MaxMarks))
 
@@ -325,6 +357,11 @@ func (h *AssessmentsHandler) ListMarks(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if a.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "assessment not found"})
+		}
 	}
 
 	var marks []models.AssessmentMark

@@ -58,6 +58,9 @@ func (h *ClassYearHandler) List(c *fiber.Ctx) error {
 	if classID > 0 {
 		query = query.Where("class_id = ?", classID)
 	}
+	if isTeacher(c) {
+		query = query.Where("class_teacher_id = ?", middleware.GetTeacherID(c))
+	}
 
 	classYears := []models.ClassYear{}
 	if err := query.
@@ -91,6 +94,11 @@ func (h *ClassYearHandler) GetOne(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class year not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if classYear.ClassTeacherID == nil || *classYear.ClassTeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class year not found"})
+		}
 	}
 
 	return c.JSON(classYear)

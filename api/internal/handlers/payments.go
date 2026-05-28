@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
+	"github.com/ishansaini194/lms/api/internal/services"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -79,7 +80,8 @@ func (h *PaymentsHandler) Create(c *fiber.Ctx) error {
 	err = h.DB.Transaction(func(tx *gorm.DB) error {
 		// Fetch fee (tenant-scoped)
 		var fee models.Fee
-		if err := tx.Where("id = ? AND school_id = ?", body.FeeID, schoolID).First(&fee).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("id = ? AND school_id = ?", body.FeeID, schoolID).First(&fee).Error; err != nil {
 			return err
 		}
 
@@ -98,6 +100,7 @@ func (h *PaymentsHandler) Create(c *fiber.Ctx) error {
 		if err := tx.Where("id = ?", schoolID).First(&school).Error; err != nil {
 			return err
 		}
+
 		periodKey := PeriodKey(school.ReceiptReset, now)
 
 		// Lock the counter row (create if missing, starting from ReceiptStartingNum-1)
@@ -142,7 +145,21 @@ func (h *PaymentsHandler) Create(c *fiber.Ctx) error {
 
 		// Recompute fee status
 		newStatus := computeStatus(net, paid.Add(amount))
-		return tx.Model(&fee).Update("status", newStatus).Error
+		if err := tx.Model(&fee).Update("status", newStatus).Error; err != nil {
+			return err
+		}
+
+		ev := auditCtx(c)
+		ev.Action = "create"
+		ev.EntityType = "payment"
+		ev.EntityID = payment.ID
+		ev.After = map[string]interface{}{
+			"receipt_no": payment.ReceiptNo,
+			"amount":     payment.Amount.String(),
+			"fee_id":     payment.FeeID,
+			"fee_status": newStatus,
+		}
+		return services.Log(tx, ev)
 	})
 
 	if err != nil {
@@ -248,6 +265,8 @@ func (h *PaymentsHandler) Reverse(c *fiber.Ctx) error {
 			return &httpError{fiber.StatusConflict, "only completed payments can be reversed"}
 		}
 
+		beforeStatus := payment.Status
+
 		now := time.Now().In(IST)
 		if err := tx.Model(&payment).Updates(map[string]interface{}{
 			"status":          "reversed",
@@ -267,7 +286,22 @@ func (h *PaymentsHandler) Reverse(c *fiber.Ctx) error {
 			return perr
 		}
 		net := fee.Amount.Sub(fee.Discount)
-		return tx.Model(&fee).Update("status", computeStatus(net, paid)).Error
+		newStatus := computeStatus(net, paid)
+		if err := tx.Model(&fee).Update("status", newStatus).Error; err != nil {
+			return err
+		}
+
+		ev := auditCtx(c)
+		ev.Action = "reverse"
+		ev.EntityType = "payment"
+		ev.EntityID = payment.ID
+		ev.Reason = body.Reason
+		ev.Before = map[string]interface{}{"status": beforeStatus}
+		ev.After = map[string]interface{}{
+			"status":     "reversed",
+			"fee_status": newStatus,
+		}
+		return services.Log(tx, ev)
 	})
 
 	if err != nil {

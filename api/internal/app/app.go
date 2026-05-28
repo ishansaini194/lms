@@ -92,26 +92,26 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Class Years
 	classYearHandler := handlers.NewClassYearHandler(db)
 
-	classYears := api.Group("/class-years", middleware.AuthRequired(), middleware.RequireRole("admin"))
-	classYears.Get("/", classYearHandler.List)
-	classYears.Get("/:id", classYearHandler.GetOne)
-	classYears.Post("/", classYearHandler.Create)
-	classYears.Put("/:id", classYearHandler.Update)
-	classYears.Delete("/:id", classYearHandler.Delete)
+	classYears := api.Group("/class-years", middleware.AuthRequired())
+	classYears.Get("/", middleware.RequireRole("admin", "teacher"), classYearHandler.List)
+	classYears.Get("/:id", middleware.RequireRole("admin", "teacher"), classYearHandler.GetOne)
+	classYears.Post("/", middleware.RequireRole("admin"), classYearHandler.Create)
+	classYears.Put("/:id", middleware.RequireRole("admin"), classYearHandler.Update)
+	classYears.Delete("/:id", middleware.RequireRole("admin"), classYearHandler.Delete)
 
 	// Enrollments
 	enrollmentHandler := handlers.NewEnrollmentsHandler(db)
 
-	enrollments := api.Group("/enrollments", middleware.AuthRequired(), middleware.RequireRole("admin"))
-	enrollments.Get("/", enrollmentHandler.List)
-	enrollments.Get("/:id", enrollmentHandler.GetOne)
-	enrollments.Put("/:id", enrollmentHandler.Update)
-	enrollments.Post("/promote", enrollmentHandler.Promote)
+	enrollments := api.Group("/enrollments", middleware.AuthRequired())
+	enrollments.Get("/", middleware.RequireRole("admin", "teacher"), enrollmentHandler.List)
+	enrollments.Get("/:id", middleware.RequireRole("admin", "teacher"), enrollmentHandler.GetOne)
+	enrollments.Put("/:id", middleware.RequireRole("admin"), enrollmentHandler.Update)
+	enrollments.Post("/promote", middleware.RequireRole("admin"), enrollmentHandler.Promote)
 
 	// Notices
 	noticesHandler := handlers.NewNoticesHandler(db)
 
-	notices := api.Group("/notices", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	notices := api.Group("/notices", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	notices.Get("/", noticesHandler.List)
 	notices.Get("/:id", noticesHandler.GetOne)
 	notices.Post("/", noticesHandler.Create)
@@ -121,7 +121,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Homeworks
 	homeworksHandler := handlers.NewHomeworksHandler(db)
 
-	homeworks := api.Group("/homeworks", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	homeworks := api.Group("/homeworks", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	homeworks.Get("/", homeworksHandler.List)
 	homeworks.Get("/:id", homeworksHandler.GetOne)
 	homeworks.Post("/", homeworksHandler.Create)
@@ -131,7 +131,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Exams
 	examsHandler := handlers.NewExamsHandler(db)
 
-	exams := api.Group("/exams", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	exams := api.Group("/exams", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	exams.Get("/", examsHandler.List)
 	exams.Get("/:id", examsHandler.GetOne)
 	exams.Post("/", examsHandler.Create)
@@ -143,7 +143,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Assessments
 	assessmentsHandler := handlers.NewAssessmentsHandler(db)
 
-	assessments := api.Group("/assessments", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	assessments := api.Group("/assessments", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	assessments.Get("/", assessmentsHandler.List)
 	assessments.Get("/:id", assessmentsHandler.GetOne)
 	assessments.Post("/", assessmentsHandler.Create)
@@ -170,4 +170,10 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	fees.Get("/:id", feesHandler.GetOne)
 	fees.Post("/", feesHandler.Create)
 	fees.Put("/:id", feesHandler.Update)
+
+	// Audit Logs
+	auditHandler := handlers.NewAuditLogsHandler(db)
+
+	auditLogs := api.Group("/audit-logs", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	auditLogs.Get("/", auditHandler.List)
 }

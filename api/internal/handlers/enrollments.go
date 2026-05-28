@@ -9,6 +9,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
+	"github.com/ishansaini194/lms/api/internal/services"
 	"gorm.io/gorm"
 )
 
@@ -66,6 +67,13 @@ func (h *EnrollmentsHandler) List(c *fiber.Ctx) error {
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
+	if isTeacher(c) {
+		query = query.Where("class_year_id IN (?)",
+			h.DB.Model(&models.ClassYear{}).
+				Select("id").
+				Where("school_id = ? AND class_teacher_id = ?", schoolID, middleware.GetTeacherID(c)),
+		)
+	}
 
 	var total int64
 	if err := query.Count(&total).Error; err != nil {
@@ -119,6 +127,11 @@ func (h *EnrollmentsHandler) GetOne(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "enrollment not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if !teacherOwnsClassYear(h.DB, middleware.GetTeacherID(c), enrollment.ClassYearID, schoolID) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "enrollment not found"})
+		}
 	}
 
 	return c.JSON(enrollment)
@@ -176,20 +189,31 @@ func (h *EnrollmentsHandler) Update(c *fiber.Ctx) error {
 		}
 	}
 
+	beforeStatus := enrollment.Status
+
 	updates := map[string]interface{}{
 		"status":  body.Status,
 		"left_on": body.LeftOn,
 	}
 
-	// Handle left_reason explicitly per status to avoid stale data
 	if body.Status == "left" && body.LeftReason != nil {
 		updates["left_reason"] = strings.TrimSpace(*body.LeftReason)
 	} else {
-		// For "graduated", clear any old reason
 		updates["left_reason"] = nil
 	}
 
-	if err := h.DB.Model(&enrollment).Updates(updates).Error; err != nil {
+	if err := h.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Model(&enrollment).Updates(updates).Error; err != nil {
+			return err
+		}
+		ev := auditCtx(c)
+		ev.Action = "status_change"
+		ev.EntityType = "enrollment"
+		ev.EntityID = enrollment.ID
+		ev.Before = map[string]interface{}{"status": beforeStatus}
+		ev.After = map[string]interface{}{"status": body.Status, "left_on": body.LeftOn}
+		return services.Log(tx, ev)
+	}); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update failed"})
 	}
 
@@ -289,7 +313,17 @@ func (h *EnrollmentsHandler) Promote(c *fiber.Ctx) error {
 			promotedCount++
 		}
 
-		return nil
+		ev := auditCtx(c)
+		ev.Action = "promote"
+		ev.EntityType = "enrollment"
+		ev.EntityID = body.FromClassYearID // the source class_year as the subject
+		ev.After = map[string]interface{}{
+			"from_class_year": body.FromClassYearID,
+			"to_class_year":   body.ToClassYearID,
+			"promoted_count":  promotedCount,
+			"skipped_count":   skippedCount,
+		}
+		return services.Log(tx, ev)
 	})
 
 	if err != nil {

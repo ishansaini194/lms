@@ -49,6 +49,9 @@ func (h *NoticesHandler) List(c *fiber.Ctx) error {
 	if !includeInactive {
 		query = query.Where("notices.is_active = ?", true)
 	}
+	if isTeacher(c) {
+		query = query.Where("notices.posted_by_id = ?", middleware.GetUserID(c))
+	}
 
 	// Filter to notices visible to a class_year: either school-wide, or targeted at it.
 	if classYearID > 0 {
@@ -81,6 +84,11 @@ func (h *NoticesHandler) GetOne(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notice not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if notice.PostedByID != middleware.GetUserID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notice not found"})
+		}
 	}
 
 	var ids []uint
@@ -172,6 +180,11 @@ func (h *NoticesHandler) Update(c *fiber.Ctx) error {
 		if err := tx.Where("id = ? AND school_id = ?", id, schoolID).First(&notice).Error; err != nil {
 			return err
 		}
+		if isTeacher(c) {
+			if notice.PostedByID != middleware.GetUserID(c) {
+				return &httpError{fiber.StatusNotFound, "notice not found"}
+			}
+		}
 
 		updates := map[string]interface{}{}
 		if body.Title != nil {
@@ -254,6 +267,11 @@ func (h *NoticesHandler) Delete(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notice not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if notice.PostedByID != middleware.GetUserID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notice not found"})
+		}
 	}
 
 	if err := h.DB.Model(&notice).Update("is_active", false).Error; err != nil {

@@ -51,11 +51,18 @@ type EnterResultsRequest struct {
 // GET /api/exams?include_inactive=&class_year_id=&teacher_id=
 func (h *ExamsHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
+
 	includeInactive, _ := strconv.ParseBool(c.Query("include_inactive"))
+
 	classYearID := c.QueryInt("class_year_id", 0)
+
 	teacherID := c.QueryInt("teacher_id", 0)
 
 	query := h.DB.Model(&models.Exam{}).Where("school_id = ?", schoolID)
+
+	if isTeacher(c) {
+		query = query.Where("teacher_id = ?", middleware.GetTeacherID(c))
+	}
 	if !includeInactive {
 		query = query.Where("is_active = ?", true)
 	}
@@ -88,6 +95,15 @@ func (h *ExamsHandler) GetOne(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
+
+	// Teacher can only view their own exam
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
+	}
+
 	return c.JSON(exam)
 }
 
@@ -119,8 +135,18 @@ func (h *ExamsHandler) Create(c *fiber.Ctx) error {
 	if err := h.validateClassYear(body.ClassYearID, schoolID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "class_year not found in this school"})
 	}
+
+	if isTeacher(c) {
+		if !teacherOwnsClassYear(h.DB, middleware.GetTeacherID(c), body.ClassYearID, schoolID) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "you can only create exams for your own classes"})
+		}
+	}
+
 	// teacher (optional) belongs to school
-	if body.TeacherID != nil {
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		body.TeacherID = &tid
+	} else if body.TeacherID != nil {
 		if err := h.validateTeacher(*body.TeacherID, schoolID); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher not found in this school"})
 		}
@@ -183,6 +209,10 @@ func (h *ExamsHandler) Update(c *fiber.Ctx) error {
 	}
 	if body.TeacherID != nil {
 		if *body.TeacherID == 0 {
+			// only admin can unassign (clear) the teacher
+			if isTeacher(c) {
+				return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "you cannot unassign this exam"})
+			}
 			updates["teacher_id"] = nil
 		} else {
 			if err := h.validateTeacher(*body.TeacherID, schoolID); err != nil {
@@ -239,6 +269,22 @@ func (h *ExamsHandler) Delete(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
+
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
+	}
+
+	// Teacher can only delete their own exam
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
+	}
+
 	if err := h.DB.Model(&exam).Update("is_active", false).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete exam"})
 	}
@@ -263,6 +309,13 @@ func (h *ExamsHandler) EnterResults(c *fiber.Ctx) error {
 
 	// Fetch exam (need max_marks + tenancy)
 	var exam models.Exam
+	// Teacher can only enter results for their own exam
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
+	}
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&exam).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
@@ -347,6 +400,15 @@ func (h *ExamsHandler) ListResults(c *fiber.Ctx) error {
 
 	// Confirm exam belongs to school
 	var exam models.Exam
+
+	// Teacher can only enter results for their own exam
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
+	}
+
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&exam).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})

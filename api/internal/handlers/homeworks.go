@@ -54,6 +54,9 @@ func (h *HomeworksHandler) List(c *fiber.Ctx) error {
 	if teacherID > 0 {
 		query = query.Where("homeworks.teacher_id = ?", teacherID)
 	}
+	if isTeacher(c) {
+		query = query.Where("homeworks.teacher_id = ?", middleware.GetTeacherID(c))
+	}
 	if classYearID > 0 {
 		query = query.
 			Joins("JOIN homework_targets ON homework_targets.homework_id = homeworks.id").
@@ -85,6 +88,11 @@ func (h *HomeworksHandler) GetOne(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
+	if isTeacher(c) {
+		if homework.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "homework not found"})
+		}
+	}
 
 	var ids []uint
 	if err := h.DB.Model(&models.HomeworkTarget{}).
@@ -105,8 +113,22 @@ func (h *HomeworksHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
 
-	if body.TeacherID == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher_id is required"})
+	if isTeacher(c) {
+		body.TeacherID = middleware.GetTeacherID(c)
+	} else {
+		if body.TeacherID == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher_id is required"})
+		}
+		// Verify teacher belongs to this school
+		var teacherCount int64
+		if err := h.DB.Model(&models.Teacher{}).
+			Where("id = ? AND school_id = ?", body.TeacherID, schoolID).
+			Count(&teacherCount).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+		}
+		if teacherCount == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher not found in this school"})
+		}
 	}
 	body.Subject = strings.TrimSpace(body.Subject)
 	body.Content = strings.TrimSpace(body.Content)
@@ -118,17 +140,6 @@ func (h *HomeworksHandler) Create(c *fiber.Ctx) error {
 	}
 	if len(body.ClassYearIDs) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "at least one class_year_id is required"})
-	}
-
-	// Verify teacher belongs to this school
-	var teacherCount int64
-	if err := h.DB.Model(&models.Teacher{}).
-		Where("id = ? AND school_id = ?", body.TeacherID, schoolID).
-		Count(&teacherCount).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
-	}
-	if teacherCount == 0 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher not found in this school"})
 	}
 
 	homework := models.Homework{
@@ -176,6 +187,11 @@ func (h *HomeworksHandler) Update(c *fiber.Ctx) error {
 		var homework models.Homework
 		if err := tx.Where("id = ? AND school_id = ?", id, schoolID).First(&homework).Error; err != nil {
 			return err
+		}
+		if isTeacher(c) {
+			if homework.TeacherID != middleware.GetTeacherID(c) {
+				return &httpError{fiber.StatusNotFound, "homework not found"}
+			}
 		}
 
 		updates := map[string]interface{}{}
@@ -248,6 +264,11 @@ func (h *HomeworksHandler) Delete(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "homework not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if isTeacher(c) {
+		if homework.TeacherID != middleware.GetTeacherID(c) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "homework not found"})
+		}
 	}
 
 	if err := h.DB.Model(&homework).Update("is_active", false).Error; err != nil {
