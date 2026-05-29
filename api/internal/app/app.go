@@ -171,9 +171,32 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	fees.Post("/", feesHandler.Create)
 	fees.Put("/:id", feesHandler.Update)
 
+	// Payments
+	paymentsHandler := handlers.NewPaymentsHandler(db)
+
+	payments := api.Group("/payments", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	payments.Get("/", paymentsHandler.List)
+	payments.Post("/", paymentsHandler.Create)
+	payments.Post("/:id/reverse", paymentsHandler.Reverse)
+
 	// Audit Logs
 	auditHandler := handlers.NewAuditLogsHandler(db)
 
 	auditLogs := api.Group("/audit-logs", middleware.AuthRequired(), middleware.RequireRole("admin"))
 	auditLogs.Get("/", auditHandler.List)
+
+	// ---------- Student portal (read-only, scoped to own data) ----------
+	studentPortalHandler := handlers.NewStudentPortalHandler(db, "uploads/library")
+
+	me := api.Group("/me", middleware.AuthRequired(), middleware.RequireRole("student"))
+	me.Get("/profile", studentPortalHandler.Profile)
+	me.Get("/enrollments", studentPortalHandler.Enrollments)
+	me.Get("/fees", studentPortalHandler.Fees)
+	me.Get("/fees/:id/payments", studentPortalHandler.FeePayments)
+	me.Get("/notices", studentPortalHandler.Notices)
+	me.Get("/homework", studentPortalHandler.Homework)
+	me.Get("/results", studentPortalHandler.Results)
+	me.Get("/assessment-marks", studentPortalHandler.AssessmentMarks)
+	me.Get("/library", studentPortalHandler.Library)
+	me.Get("/library/:id/download", studentPortalHandler.LibraryDownload)
 }
