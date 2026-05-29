@@ -1,0 +1,348 @@
+package handlers
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/ishansaini194/lms/api/internal/middleware"
+	"github.com/ishansaini194/lms/api/internal/models"
+	"gorm.io/gorm"
+)
+
+type StudentPortalHandler struct {
+	DB             *gorm.DB
+	LibraryBaseDir string
+}
+
+func NewStudentPortalHandler(db *gorm.DB, libraryBaseDir string) *StudentPortalHandler {
+	return &StudentPortalHandler{DB: db, LibraryBaseDir: libraryBaseDir}
+}
+
+// studentID pulls the student_id from the JWT and guards against a missing/zero
+// value (which would otherwise silently scope queries to "student 0").
+// Returns (0, false) if absent — caller should return 401.
+func (h *StudentPortalHandler) studentID(c *fiber.Ctx) (uint, bool) {
+	sid := middleware.GetStudentID(c)
+	if sid == 0 {
+		return 0, false
+	}
+	return sid, true
+}
+
+// activeClassYearIDs returns the class_year IDs the student is currently
+// actively enrolled in (status = 'active'). Used to scope notices, homework,
+// library to the student's current class(es).
+func (h *StudentPortalHandler) activeClassYearIDs(studentID, schoolID uint) ([]uint, error) {
+	var ids []uint
+	err := h.DB.Model(&models.Enrollment{}).
+		Where("school_id = ? AND student_id = ? AND status = ?", schoolID, studentID, "active").
+		Pluck("class_year_id", &ids).Error
+	return ids, err
+}
+
+// allEnrollmentIDs returns every enrollment id for the student (all years).
+// Used to scope fees, results, assessment marks (history matters there).
+func (h *StudentPortalHandler) allEnrollmentIDs(studentID, schoolID uint) ([]uint, error) {
+	var ids []uint
+	err := h.DB.Model(&models.Enrollment{}).
+		Where("school_id = ? AND student_id = ?", schoolID, studentID).
+		Pluck("id", &ids).Error
+	return ids, err
+}
+
+// GET /api/me/profile — the student's own record
+func (h *StudentPortalHandler) Profile(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	var student models.Student
+	if err := h.DB.Where("id = ? AND school_id = ?", sid, schoolID).First(&student).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "student not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	return c.JSON(student)
+}
+
+// GET /api/me/enrollments — the student's class history (all years)
+func (h *StudentPortalHandler) Enrollments(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	var enrollments []models.Enrollment
+	if err := h.DB.
+		Where("school_id = ? AND student_id = ?", schoolID, sid).
+		Preload("ClassYear.Class").
+		Preload("ClassYear.AcademicYear").
+		Order("created_at DESC").
+		Find(&enrollments).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch enrollments"})
+	}
+	return c.JSON(enrollments)
+}
+
+// GET /api/me/fees — all the student's fees (all years), with computed net_amount
+func (h *StudentPortalHandler) Fees(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	enrollmentIDs, err := h.allEnrollmentIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if len(enrollmentIDs) == 0 {
+		return c.JSON([]models.Fee{})
+	}
+
+	var fees []models.Fee
+	if err := h.DB.
+		Where("school_id = ? AND enrollment_id IN ?", schoolID, enrollmentIDs).
+		Order("month ASC, id ASC").
+		Find(&fees).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch fees"})
+	}
+
+	for i := range fees {
+		fees[i].NetAmount = fees[i].Amount.Sub(fees[i].Discount)
+	}
+	return c.JSON(fees)
+}
+
+// GET /api/me/fees/:id/payments — payment history for one of the student's fees.
+// Verifies the fee belongs to the student before returning any payments.
+func (h *StudentPortalHandler) FeePayments(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	feeID, err := strconv.Atoi(c.Params("id"))
+	if err != nil || feeID <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid fee id"})
+	}
+
+	enrollmentIDs, err := h.allEnrollmentIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if len(enrollmentIDs) == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "fee not found"})
+	}
+
+	var fee models.Fee
+	if err := h.DB.
+		Where("id = ? AND school_id = ? AND enrollment_id IN ?", feeID, schoolID, enrollmentIDs).
+		First(&fee).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "fee not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
+	var payments []models.Payment
+	if err := h.DB.
+		Where("fee_id = ? AND school_id = ?", fee.ID, schoolID).
+		Order("paid_at DESC").
+		Find(&payments).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch payments"})
+	}
+	return c.JSON(payments)
+}
+
+// GET /api/me/notices — notices visible to the student:
+// school-wide notices OR notices targeted at a class_year they're actively enrolled in.
+func (h *StudentPortalHandler) Notices(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	classYearIDs, err := h.activeClassYearIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
+	query := h.DB.Model(&models.Notice{}).
+		Where("notices.school_id = ? AND notices.is_active = ?", schoolID, true)
+
+	// Single Where call so GORM wraps the OR in parens, preserving the school/active filter above.
+	if len(classYearIDs) > 0 {
+		query = query.
+			Joins("LEFT JOIN notice_targets ON notice_targets.notice_id = notices.id").
+			Where("notices.target_all_school = ? OR notice_targets.class_year_id IN ?", true, classYearIDs).
+			Group("notices.id")
+	} else {
+		query = query.Where("notices.target_all_school = ?", true)
+	}
+
+	var notices []models.Notice
+	if err := query.Order("notices.created_at DESC").Find(&notices).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch notices"})
+	}
+	return c.JSON(notices)
+}
+
+// GET /api/me/homework — homework targeted at a class_year the student is
+// actively enrolled in. (Homework has no school-wide flag; always class-targeted.)
+func (h *StudentPortalHandler) Homework(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	classYearIDs, err := h.activeClassYearIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if len(classYearIDs) == 0 {
+		return c.JSON([]models.Homework{})
+	}
+
+	var homeworks []models.Homework
+	if err := h.DB.Model(&models.Homework{}).
+		Joins("JOIN homework_targets ON homework_targets.homework_id = homeworks.id").
+		Where("homeworks.school_id = ? AND homeworks.is_active = ? AND homework_targets.class_year_id IN ?",
+			schoolID, true, classYearIDs).
+		Group("homeworks.id").
+		Order("homeworks.due_date DESC NULLS LAST, homeworks.id DESC").
+		Find(&homeworks).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch homework"})
+	}
+	return c.JSON(homeworks)
+}
+
+// GET /api/me/results — the student's exam results (all years), with exam info.
+func (h *StudentPortalHandler) Results(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	enrollmentIDs, err := h.allEnrollmentIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if len(enrollmentIDs) == 0 {
+		return c.JSON([]models.Result{})
+	}
+
+	var results []models.Result
+	if err := h.DB.
+		Where("school_id = ? AND enrollment_id IN ?", schoolID, enrollmentIDs).
+		Preload("Exam").
+		Order("id DESC").
+		Find(&results).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch results"})
+	}
+	return c.JSON(results)
+}
+
+// GET /api/me/assessment-marks — the student's assessment marks (all years).
+func (h *StudentPortalHandler) AssessmentMarks(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	enrollmentIDs, err := h.allEnrollmentIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if len(enrollmentIDs) == 0 {
+		return c.JSON([]models.AssessmentMark{})
+	}
+
+	var marks []models.AssessmentMark
+	if err := h.DB.
+		Where("school_id = ? AND enrollment_id IN ?", schoolID, enrollmentIDs).
+		Preload("Assessment").
+		Order("id DESC").
+		Find(&marks).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch assessment marks"})
+	}
+	return c.JSON(marks)
+}
+
+// GET /api/me/library — library files for the student's school.
+// Library content (syllabus, notes, datesheets) is shared educational material,
+// not per-student private data, so students see all of their school's files.
+// Optional filters: ?category=&subject=
+func (h *StudentPortalHandler) Library(c *fiber.Ctx) error {
+	_, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	category := strings.TrimSpace(c.Query("category"))
+	subject := strings.TrimSpace(c.Query("subject"))
+
+	query := h.DB.Where("school_id = ?", schoolID)
+	if category != "" {
+		query = query.Where("category = ?", category)
+	}
+	if subject != "" {
+		query = query.Where("subject = ?", subject)
+	}
+
+	var files []models.Library
+	if err := query.Order("created_at DESC").Find(&files).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch library files"})
+	}
+	return c.JSON(files)
+}
+
+// GET /api/me/library/:id/download — stream a library file from the student's school.
+func (h *StudentPortalHandler) LibraryDownload(c *fiber.Ctx) error {
+	_, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file id"})
+	}
+
+	var lf models.Library
+	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&lf).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
+	diskPath := filepath.Join(h.LibraryBaseDir, filepath.FromSlash(lf.FileUrl))
+	absBase, _ := filepath.Abs(h.LibraryBaseDir)
+	absPath, _ := filepath.Abs(diskPath)
+	if !strings.HasPrefix(absPath, absBase) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
+	}
+
+	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, sanitizeFilename(lf.Title)))
+	return c.SendFile(absPath)
+}
