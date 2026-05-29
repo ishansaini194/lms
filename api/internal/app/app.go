@@ -28,7 +28,6 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 
 	// ---------- Public routes ----------
 	authHandler := handlers.NewAuthHandler(db)
-	api.Post("/login", authHandler.Login)
 
 	loginLimiter := limiter.New(limiter.Config{
 		Max:        10,
