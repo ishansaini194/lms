@@ -13,6 +13,8 @@ type Result struct {
 	EnrollmentID uint            `gorm:"not null;uniqueIndex:idx_results_exam_enrollment;index:idx_results_enrollment" json:"enrollment_id"`
 	Marks        decimal.Decimal `gorm:"type:numeric(6,2);not null" json:"marks"`
 
+	Exam *Exam `gorm:"foreignKey:ExamID" json:"exam,omitempty"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
