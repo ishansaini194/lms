@@ -363,9 +363,9 @@ CREATE INDEX idx_assessment_marks_school ON assessment_marks (school_id);
 
 CREATE INDEX idx_assessment_marks_enrollment ON assessment_marks (enrollment_id);
 
--- library_files
+-- library
 CREATE TABLE
-    library_files (
+    library (
         id BIGSERIAL PRIMARY KEY,
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         uploaded_by_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
@@ -381,11 +381,11 @@ CREATE TABLE
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW ()
     );
 
-CREATE INDEX idx_library_files_school ON library_files (school_id);
+CREATE INDEX idx_library_school ON library (school_id);
 
-CREATE INDEX idx_library_files_school_category ON library_files (school_id, category);
+CREATE INDEX idx_library_school_category ON library (school_id, category);
 
-CREATE INDEX idx_library_files_class ON library_files (class_number);
+CREATE INDEX idx_library_class ON library (class_number);
 
 -- audit_logs
 CREATE TABLE
