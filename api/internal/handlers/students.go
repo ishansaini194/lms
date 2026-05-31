@@ -179,6 +179,7 @@ func (h *StudentsHandler) CreateStudent(c *fiber.Ctx) error {
 			Username:     body.AdmissionNumber,
 			PasswordHash: hash,
 			Role:         "student",
+			DisplayName:  &body.Name,
 			StudentID:    &student.ID,
 			IsActive:     true,
 		}

@@ -108,6 +108,7 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 		Username:     body.Username,
 		PasswordHash: hash,
 		Role:         "teacher",
+		DisplayName:  &body.Name,
 		IsActive:     true,
 	}
 
