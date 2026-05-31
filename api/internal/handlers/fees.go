@@ -23,6 +23,20 @@ func NewFeesHandler(db *gorm.DB) *FeesHandler {
 	return &FeesHandler{DB: db}
 }
 
+// computeFromPayments fills the non-stored net_amount, amount_paid, and balance
+// on a single fee whose Payments association is already loaded.
+func computeFromPayments(fee *models.Fee) {
+	fee.NetAmount = fee.Amount.Sub(fee.Discount)
+	paid := decimal.Zero
+	for _, p := range fee.Payments {
+		if p.Status == "completed" {
+			paid = paid.Add(p.Amount)
+		}
+	}
+	fee.AmountPaid = paid
+	fee.Balance = fee.NetAmount.Sub(paid)
+}
+
 // Allowed fee types. Adjustments are handled by editing the amount directly
 // (Interpretation A), so there are no *_adjust types.
 var validFeeTypes = map[string]bool{
@@ -141,9 +155,33 @@ func (h *FeesHandler) List(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch fees"})
 	}
 
-	// Populate computed net_amount on each row
+	// Populate computed net_amount, amount_paid, and balance on each row.
+	// Sum completed payments per fee in one batched query (no N+1).
+	feeIDs := make([]uint, len(fees))
+	for i := range fees {
+		feeIDs[i] = fees[i].ID
+	}
+	type paidRow struct {
+		FeeID uint
+		Total decimal.Decimal
+	}
+	var paidRows []paidRow
+	if len(feeIDs) > 0 {
+		h.DB.Model(&models.Payment{}).
+			Select("fee_id, COALESCE(SUM(amount), 0) as total").
+			Where("fee_id IN ? AND status = ?", feeIDs, "completed").
+			Group("fee_id").
+			Scan(&paidRows)
+	}
+	paidByFee := map[uint]decimal.Decimal{}
+	for _, r := range paidRows {
+		paidByFee[r.FeeID] = r.Total
+	}
 	for i := range fees {
 		fees[i].NetAmount = fees[i].Amount.Sub(fees[i].Discount)
+		paid := paidByFee[fees[i].ID]
+		fees[i].AmountPaid = paid
+		fees[i].Balance = fees[i].NetAmount.Sub(paid)
 	}
 
 	totalPages := int(total) / limit
@@ -180,7 +218,7 @@ func (h *FeesHandler) GetOne(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 
-	fee.NetAmount = fee.Amount.Sub(fee.Discount)
+	computeFromPayments(&fee)
 	return c.JSON(fee)
 }
 
@@ -284,7 +322,7 @@ func (h *FeesHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create fee"})
 	}
 
-	fee.NetAmount = fee.Amount.Sub(fee.Discount)
+	computeFromPayments(&fee)
 	return c.Status(fiber.StatusCreated).JSON(fee)
 }
 
@@ -425,7 +463,7 @@ func (h *FeesHandler) Update(c *fiber.Ctx) error {
 		First(&fee).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "update succeeded but reload failed"})
 	}
-	fee.NetAmount = fee.Amount.Sub(fee.Discount)
+	computeFromPayments(&fee)
 	return c.JSON(fee)
 }
 

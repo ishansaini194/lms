@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
 	"github.com/ishansaini194/lms/api/internal/database"
 	"github.com/ishansaini194/lms/api/internal/handlers"
@@ -28,6 +29,12 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 
 	// ---------- Public routes ----------
 	authHandler := handlers.NewAuthHandler(db)
+
+	srv.App.Use(cors.New(cors.Config{
+		AllowOrigins: "http://localhost:5173",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
+	}))
 
 	loginLimiter := limiter.New(limiter.Config{
 		Max:        10,
@@ -138,6 +145,12 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	exams.Delete("/:id", examsHandler.Delete)
 	exams.Post("/:id/results", examsHandler.EnterResults)
 	exams.Get("/:id/results", examsHandler.ListResults)
+
+	// Dashboard
+	dashboardHandler := handlers.NewDashboardHandler(db)
+
+	dashboard := api.Group("/dashboard", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	dashboard.Get("/stats", dashboardHandler.Stats)
 
 	// Assessments
 	assessmentsHandler := handlers.NewAssessmentsHandler(db)
