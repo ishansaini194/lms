@@ -4,6 +4,7 @@ import { getToken, setToken, login as apiLogin } from '@/lib/api';
 const AuthContext = createContext(null);
 
 const USER_KEY = 'studyme_user';
+const SCHOOL_KEY = 'studyme_school';
 
 function loadUser() {
   try {
@@ -14,12 +15,22 @@ function loadUser() {
   }
 }
 
+function loadSchool() {
+  try {
+    const raw = localStorage.getItem(SCHOOL_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function AuthProvider({ children }) {
   // Initialize from localStorage so a refresh keeps the session.
   const [token, setTok] = useState(() => getToken());
   const [user, setUser] = useState(() => loadUser());
+  const [school, setSchool] = useState(() => loadSchool());
 
-  // Keep storage in sync whenever token/user change.
+  // Keep storage in sync whenever token/user/school change.
   useEffect(() => { setToken(token); }, [token]);
   useEffect(() => {
     try {
@@ -27,22 +38,31 @@ export function AuthProvider({ children }) {
            : localStorage.removeItem(USER_KEY);
     } catch {}
   }, [user]);
+  useEffect(() => {
+    try {
+      school ? localStorage.setItem(SCHOOL_KEY, JSON.stringify(school))
+             : localStorage.removeItem(SCHOOL_KEY);
+    } catch {}
+  }, [school]);
 
   const login = async (credentials) => {
-    const { token: t, user: u } = await apiLogin(credentials);
-    setTok(t);
-    setUser(u);
-    return u;
+    const res = await apiLogin(credentials);
+    setTok(res.token);
+    setUser(res.user);
+    setSchool(res.school || null);
+    return res.user;
   };
 
   const logout = () => {
     setTok(null);
     setUser(null);
+    setSchool(null);
   };
 
   const value = {
     token,
     user,
+    school,
     isAuthenticated: !!token,
     login,
     logout,

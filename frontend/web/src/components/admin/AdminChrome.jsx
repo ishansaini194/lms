@@ -1,11 +1,20 @@
 // Admin chrome + admin-only components — ported from admin-hifi-kit.jsx.
 // Sidebar/TopBar nav wired to React Router instead of static `active` prop.
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
-import { Avatar } from '@/components/ui/primitives';
+import { Avatar, ModalShell, Btn } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
+import { apiFetch } from '@/lib/api';
+
+// First letter of up to two words of the school name → logo initials.
+const schoolInitials = (name) => {
+  if (!name) return 'S';
+  return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase() || 'S';
+};
+
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 
 const adminNav = [
   { id: 'Dashboard', icon: I.home,   to: '/admin' },
@@ -21,8 +30,24 @@ const adminNav = [
 const AdminSidebar = ({ active: activeProp }) => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, school, logout } = useAuth();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [yearLabel, setYearLabel] = useState('—');
   const doLogout = () => { logout(); navigate('/login', { replace: true }); };
+
+  // Current academic year for the sidebar switcher (the auth context has no year).
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/academic-years')
+      .then((years) => {
+        if (cancelled) return;
+        const current = Array.isArray(years) && years.find(y => y.is_current === true);
+        if (current?.year_label) setYearLabel(current.year_label);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+
   const active = activeProp || (adminNav.find(n =>
     n.to === '/admin' ? location.pathname === '/admin'
       : location.pathname.startsWith(n.to)
@@ -42,9 +67,9 @@ const AdminSidebar = ({ active: activeProp }) => {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         color: '#fff', fontFamily: hfFonts.ui, fontWeight: 700, fontSize: 14,
         letterSpacing: '-0.02em',
-      }}>KR</div>
+      }}>{schoolInitials(school?.name)}</div>
       <div>
-        <div style={{ fontFamily: hfFonts.ui, fontSize: 14, fontWeight: 650, color: hf.ink, letterSpacing: '-0.01em' }}>Kendriya Riverside</div>
+        <div style={{ fontFamily: hfFonts.ui, fontSize: 14, fontWeight: 650, color: hf.ink, letterSpacing: '-0.01em' }}>{school?.name || 'School'}</div>
         <div style={{ fontFamily: hfFonts.ui, fontSize: 11, color: hf.muted, marginTop: -1 }}>Admin console</div>
       </div>
     </div>
@@ -64,7 +89,7 @@ const AdminSidebar = ({ active: activeProp }) => {
       }}>{I.cal}</div>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Academic year</div>
-        <div style={{ fontSize: 13, fontWeight: 700, color: hf.ink, ...hfText.num }}>2025–26</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: hf.ink, ...hfText.num }}>{yearLabel}</div>
       </div>
       <span style={{ color: hf.muted, display: 'inline-flex' }}>{I.chev}</span>
     </div>
@@ -95,21 +120,41 @@ const AdminSidebar = ({ active: activeProp }) => {
     <div style={{ flex: 1 }} />
 
     {/* Account */}
-    <div onClick={doLogout} title="Sign out" className="hf-clickable" style={{
+    <div onClick={() => setConfirmOpen(true)} title="Sign out" className="hf-clickable" style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '10px 8px 6px', borderTop: `1px solid ${hf.borderS}`,
     }}>
-      <Avatar name={user?.username || 'R Singh'} size={32} />
+      <Avatar name={user?.display_name || user?.username || 'User'} size={32} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 12.5, fontWeight: 600, color: hf.ink, lineHeight: 1.2 }}>
-          {user?.username === 'admin' || !user ? 'Mr. R. Singh' : user.username}
+          {user?.display_name || user?.username || 'User'}
         </div>
         <div style={{ fontSize: 11, color: hf.muted, lineHeight: 1.2 }}>
-          {user?.role ? `${user.role.charAt(0).toUpperCase()}${user.role.slice(1)}` : 'Principal · admin'} · sign out
+          {user?.role ? cap(user.role) : ''} · sign out
         </div>
       </div>
       <span style={{ color: hf.muted, display: 'inline-flex' }}>{I.logout || I.more}</span>
     </div>
+
+    {confirmOpen && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 1000 }}
+           onClick={() => setConfirmOpen(false)}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+          <ModalShell
+            title="Sign out of StudyMe?"
+            width={400}
+            footer={<>
+              <Btn variant="ghost" size="md" onClick={() => setConfirmOpen(false)}>Cancel</Btn>
+              <Btn variant="accent" size="md" onClick={() => { setConfirmOpen(false); doLogout(); }}>Sign out</Btn>
+            </>}
+          >
+            <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+              You'll need to sign in again to access the admin console.
+            </div>
+          </ModalShell>
+        </div>
+      </div>
+    )}
   </aside>
   );
 };

@@ -35,7 +35,8 @@ export async function apiFetch(path, { method = 'GET', body, auth = true } = {})
 
 // ─── Auth calls ───────────────────────────────────────────────────────────
 // Login: POST /api/login { school_code, username, password }
-//   → { token, user: { id, username, role, school_id } }
+//   → { token, user: { id, username, role, school_id, display_name },
+//       school: { id, name, code } }
 export async function login({ school_code, username, password }) {
   if (USE_MOCK) {
     // Mock: accept the demo admin so the gated flow is testable without a backend.

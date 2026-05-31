@@ -1,7 +1,7 @@
 // UI primitives — ported verbatim from the hi-fi kit.
 // Same names, same markup; only change is `const` -> `export const`
 // and importing the shared tokens/icons instead of reading window globals.
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 
@@ -250,3 +250,193 @@ export const FTextarea = ({ value, onChange, placeholder, rows = 3 }) => (
     style={{ ...fieldInputBase, resize: 'vertical', lineHeight: 1.5 }}
   />
 );
+
+// ─── Shared page-level controls (search + filter bars) ───────────────────
+// Real controlled components for list pages. The page-level Searchbox/Dropdown
+// in AdminChrome are display-only; these replace them where pages need state.
+
+// Controlled search box: leading icon + text input + clear (×) when non-empty.
+// Debouncing is the caller's responsibility.
+export const SearchInput = ({ value, onChange, placeholder = 'Search…', width = 260, autoFocus = false }) => {
+  const [focused, setFocused] = useState(false);
+  const hasValue = (value ?? '') !== '';
+  return (
+    <div style={{
+      ...fieldInputBase,
+      width: typeof width === 'number' ? width : width,
+      padding: '0 10px',
+      display: 'flex', alignItems: 'center', gap: 8,
+      border: `1px solid ${focused ? hf.primaryEdge : hf.border}`,
+    }}>
+      <span style={{ color: hf.muted, display: 'inline-flex', flexShrink: 0 }}>{I.search}</span>
+      <input
+        value={value ?? ''}
+        placeholder={placeholder}
+        autoFocus={autoFocus}
+        onChange={(e) => onChange?.(e.target.value)}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={{
+          flex: 1, minWidth: 0, padding: '9px 0',
+          border: 'none', outline: 'none', background: 'transparent',
+          fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui,
+        }}
+      />
+      {hasValue && (
+        <span
+          onClick={() => onChange?.('')}
+          role="button"
+          title="Clear"
+          style={{
+            color: hf.muted, cursor: 'pointer', flexShrink: 0,
+            fontSize: 16, lineHeight: 1, padding: '0 2px',
+          }}
+        >×</span>
+      )}
+    </div>
+  );
+};
+
+// Controlled filter dropdown: label + native <select> (keyboard/mobile friendly).
+// Caller supplies the "All" option as { value: '', label: 'All' }.
+export const FilterSelect = ({ label, value, onChange, options = [], width = 160 }) => (
+  <div style={{
+    display: 'inline-flex', alignItems: 'center', gap: 8,
+    minWidth: typeof width === 'number' ? width : width,
+  }}>
+    {label && <span style={{ ...hfText.small, color: hf.muted, fontWeight: 500, flexShrink: 0 }}>{label}</span>}
+    <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+      <select
+        value={value ?? ''}
+        onChange={(e) => onChange?.(e.target.value)}
+        style={{
+          ...fieldInputBase, appearance: 'none', cursor: 'pointer',
+          paddingRight: 30, fontWeight: 550,
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+      <span style={{
+        position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+        color: hf.muted, display: 'inline-flex', pointerEvents: 'none',
+      }}>{I.arrDown}</span>
+    </div>
+  </div>
+);
+
+// Typeahead picker for long option lists (e.g. teacher assignment). Type to
+// filter; click-outside / Escape close. Options: [{ value, label, sublabel? }].
+export const SearchableSelect = ({
+  value,
+  onChange,
+  options = [],
+  placeholder = 'Select…',
+  searchPlaceholder = 'Type to search…',
+  width = '100%',
+  disabled = false,
+  allowClear = true,
+}) => {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const rootRef = useRef(null);
+
+  const selected = options.find((o) => o.value === value) || null;
+
+  // Close on outside click or Escape.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e) => {
+      if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  // Reset the filter each time the panel opens.
+  useEffect(() => { if (open) setQuery(''); }, [open]);
+
+  const filtered = options.filter((o) =>
+    o.label.toLowerCase().includes(query.trim().toLowerCase())
+  );
+
+  const pick = (o) => { onChange?.(o.value, o); setOpen(false); };
+
+  return (
+    <div ref={rootRef} style={{
+      position: 'relative',
+      width: typeof width === 'number' ? width : width,
+    }}>
+      <div
+        onClick={() => { if (!disabled) setOpen((v) => !v); }}
+        style={{
+          ...fieldInputBase,
+          display: 'flex', alignItems: 'center', gap: 8,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          ...(disabled ? { background: hf.surface2, color: hf.muted } : {}),
+        }}
+      >
+        <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: selected ? hf.ink : hf.faint }}>
+          {selected ? selected.label : placeholder}
+        </span>
+        {allowClear && selected && !disabled && (
+          <span
+            onClick={(e) => { e.stopPropagation(); onChange?.(null, null); }}
+            role="button"
+            title="Clear"
+            style={{ color: hf.muted, cursor: 'pointer', fontSize: 16, lineHeight: 1, flexShrink: 0 }}
+          >×</span>
+        )}
+        <span style={{ color: hf.muted, display: 'inline-flex', flexShrink: 0 }}>{I.arrDown}</span>
+      </div>
+
+      {open && !disabled && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 60,
+          marginTop: 4, background: hf.surface,
+          border: `1px solid ${hf.border}`, borderRadius: 12,
+          boxShadow: hf.shadowLg, overflow: 'hidden',
+        }}>
+          <div style={{ padding: 8, borderBottom: `1px solid ${hf.borderS}` }}>
+            <SearchInput
+              value={query}
+              onChange={setQuery}
+              placeholder={searchPlaceholder}
+              width="100%"
+              autoFocus
+            />
+          </div>
+          <div className="hf-scroll" style={{ maxHeight: 280, overflow: 'auto', padding: 4 }}>
+            {filtered.length === 0 && (
+              <div style={{ padding: '10px 12px', ...hfText.small, color: hf.muted }}>No matches</div>
+            )}
+            {filtered.map((o) => {
+              const isSel = o.value === value;
+              return (
+                <div
+                  key={o.value}
+                  onClick={() => pick(o)}
+                  className="hf-clickable"
+                  style={{
+                    padding: '8px 10px', borderRadius: 8, cursor: 'pointer',
+                    background: isSel ? hf.primarySoft : 'transparent',
+                    display: 'flex', flexDirection: 'column', gap: 1,
+                  }}
+                >
+                  <span style={{ fontSize: 13, color: isSel ? hf.primary : hf.ink, fontWeight: isSel ? 600 : 500 }}>{o.label}</span>
+                  {o.sublabel && <span style={{ ...hfText.small, color: hf.muted }}>{o.sublabel}</span>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
