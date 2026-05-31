@@ -1,0 +1,89 @@
+/* StudyMe design system — base CSS.
+   Color tokens live in JS (lib/styles.js) because the design uses oklch()
+   values consumed via inline styles; this file holds the global rules and
+   keyframes that the original hi-fi kit injected at runtime. */
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: #f4f2ec;
+  font-family: 'Inter', -apple-system, system-ui, sans-serif;
+  color: #15181d;
+}
+#root {
+  height: 100vh;
+}
+* {
+  box-sizing: border-box;
+}
+
+.hf * {
+  box-sizing: border-box;
+}
+
+/* Scrollbars */
+.hf-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.hf-scroll::-webkit-scrollbar-thumb {
+  background: #efece4;
+  border-radius: 3px;
+}
+.hf-scroll::-webkit-scrollbar-thumb:hover {
+  background: #b8bfca;
+}
+.hf-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #efece4 transparent;
+}
+
+/* Interactions */
+.hf-btn {
+  transition: background 0.12s, transform 0.08s, box-shadow 0.12s, color 0.12s;
+  cursor: pointer;
+}
+.hf-btn:active {
+  transform: translateY(0.5px);
+}
+.hf-row {
+  transition: background 0.1s;
+}
+.hf-row:hover {
+  background: #faf9f5;
+}
+.hf-clickable {
+  cursor: pointer;
+}
+
+/* Keyframes used by skeleton loaders and the typing caret */
+@keyframes hf-skel {
+  0% {
+    background-position: 0% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+@keyframes hf-caret {
+  0%,
+  49% {
+    opacity: 1;
+  }
+  50%,
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes hf-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
