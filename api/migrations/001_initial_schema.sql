@@ -92,6 +92,7 @@ CREATE TABLE
         username VARCHAR(100) NOT NULL,
         password_hash VARCHAR(500) NOT NULL,
         role VARCHAR(20) NOT NULL,
+        display_name VARCHAR(200),
         teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
         student_id BIGINT REFERENCES students (id) ON DELETE SET NULL,
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
