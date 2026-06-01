@@ -2,13 +2,13 @@
 // Only transformation: import shared symbols instead of reading window globals,
 // and `export` the screen components instead of Object.assign(window, ...).
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '@/lib/api';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame,
+  ModalShell, StateFrame, SearchInput, FInput,
 } from '@/components/ui/primitives';
 import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox, Dropdown,
@@ -16,7 +16,7 @@ import {
 } from '@/components/admin/AdminChrome';
 import { HA7Modal, AcademicYearFormModal, ConfirmModal } from '@/pages/admin/extras.jsx';
 import {
-  examResults, reportTerms,
+  reportTerms,
 } from '@/mock/data';
 
 // Admin hi-fi · A7 Exams · A7 Detail · A7 Report Card · A9 Settings
@@ -32,6 +32,7 @@ const HA7 = () => {
   const [exams, setExams] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
 
   const loadExams = () => {
     setLoading(true);
@@ -41,6 +42,11 @@ const HA7 = () => {
       .finally(() => setLoading(false));
   };
   useEffect(() => { loadExams(); }, []);
+
+  const q = search.trim().toLowerCase();
+  const visibleExams = q
+    ? exams.filter((e) => `${e.name || ''} ${e.subject || ''} ${e.class_label || ''}`.toLowerCase().includes(q))
+    : exams;
 
   const confirmDelete = async () => {
     if (!deleting) return;
@@ -69,8 +75,10 @@ const HA7 = () => {
       </>}
     >
       <Card padding={14} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <div style={{ flex: 1, minWidth: 200 }}><Searchbox placeholder="Search subject or class…" width={'100%'} /></div>
-        <span style={{ ...hfText.small, color: hf.muted }}>{loading ? 'Loading…' : `${exams.length} exam${exams.length === 1 ? '' : 's'}`}</span>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <SearchInput value={search} onChange={setSearch} placeholder="Search subject, class, or exam…" width={'100%'} />
+        </div>
+        <span style={{ ...hfText.small, color: hf.muted }}>{loading ? 'Loading…' : `${visibleExams.length} exam${visibleExams.length === 1 ? '' : 's'}`}</span>
       </Card>
 
       {loading && (
@@ -84,10 +92,13 @@ const HA7 = () => {
           No exams yet · <span onClick={() => setShowCreate(true)} style={{ color: hf.primary, fontWeight: 600, cursor: 'pointer' }}>create one →</span>
         </Card>
       )}
+      {!loading && !error && exams.length > 0 && visibleExams.length === 0 && (
+        <Card padding={40} style={{ textAlign: 'center', ...hfText.small, color: hf.muted }}>No exams match "{search}".</Card>
+      )}
 
-      {!loading && !error && exams.length > 0 && (
+      {!loading && !error && visibleExams.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
-          {exams.map((ex) => (
+          {visibleExams.map((ex) => (
             <Card key={ex.id} padding={0}>
               <div style={{
                 padding: '14px 16px',
@@ -98,7 +109,7 @@ const HA7 = () => {
                   <SubjectIcon subject={ex.subject} size={28} />
                   <div>
                     <div style={{ ...hfText.h2, fontSize: 15, lineHeight: 1.2 }}>{ex.name}</div>
-                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{ex.subject}</div>
+                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{ex.subject} · {ex.class_label || '—'}</div>
                   </div>
                 </div>
                 {!ex.is_active && <Pill tone="neutral">Inactive</Pill>}
@@ -111,6 +122,10 @@ const HA7 = () => {
                 <div>
                   <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Date</div>
                   <div style={{ ...hfText.num, fontSize: 13, fontWeight: 600, marginTop: 2 }}>{ex.exam_date ? fmtDate(ex.exam_date) : '—'}</div>
+                </div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Teacher</div>
+                  <div style={{ ...hfText.small, fontWeight: 600, marginTop: 3, color: ex.teacher_name ? hf.ink : hf.faint, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ex.teacher_name || 'Unassigned'}</div>
                 </div>
               </div>
               <div style={{ padding: '10px 16px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -156,103 +171,165 @@ const HA7 = () => {
 };
 
 // ─── A7 · Exam detail (admin read-only) ───────────────────────────────────
+// One row of the marks-entry grid (module-level to avoid focus loss).
+const MarksEntryRow = ({ row, value, max, invalid, onChange, last }) => (
+  <div style={{
+    display: 'grid', gridTemplateColumns: '36px 1.6fr 120px 170px',
+    padding: '9px 20px', alignItems: 'center',
+    borderBottom: last ? 'none' : `1px solid ${hf.borderS}`,
+  }}>
+    <Avatar name={row.student_name} size={28} />
+    <div style={{ ...hfText.small, fontWeight: 600 }}>{row.student_name}</div>
+    <div style={{ ...hfText.num, fontSize: 11.5, color: hf.muted }}>{row.admission_no}</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ width: 84 }}>
+        <FInput type="number" value={value} onChange={onChange} placeholder="—" />
+      </div>
+      <span style={{ ...hfText.small, color: hf.muted }}>/ {max}</span>
+      {invalid && <span style={{ ...hfText.small, color: hf.accent, fontWeight: 700 }}>out of range</span>}
+    </div>
+  </div>
+);
+
+// ─── A7 · Exam detail — real marks-entry grid ─────────────────────────────
 const HA7Detail = () => {
-  const gradeOf = (m, max) => m === 'AB' ? null : (m / max) * 100 >= 85 ? 'A' : (m / max) * 100 >= 70 ? 'B' : 'C';
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const [exam, setExam] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [marks, setMarks] = useState({}); // enrollment_id -> marks string
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    setError(null);
+    apiFetch(`/api/exams/${id}/results`)
+      .then((data) => {
+        setExam(data.exam || null);
+        const r = data.rows || [];
+        setRows(r);
+        const m = {};
+        r.forEach((row) => { m[row.enrollment_id] = row.marks != null ? String(row.marks) : ''; });
+        setMarks(m);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [id]);
+
+  const max = exam?.max_marks || 0;
+  const setMark = (eid) => (v) => { setMarks((p) => ({ ...p, [eid]: v })); setSavedMsg(''); };
+
+  // Marks are kept as strings; Number() is only for the range check.
+  const isInvalid = (v) => {
+    if (v == null || v === '') return false;
+    const n = Number(v);
+    return Number.isNaN(n) || n < 0 || n > max;
+  };
+  const anyInvalid = rows.some((r) => isInvalid(marks[r.enrollment_id]));
+  const enteredCount = rows.filter((r) => (marks[r.enrollment_id] ?? '') !== '' && !isInvalid(marks[r.enrollment_id])).length;
+
+  // Non-authoritative UI stats.
+  const nums = rows.map((r) => marks[r.enrollment_id]).filter((v) => v !== '' && v != null && !Number.isNaN(Number(v))).map(Number);
+  const avg = nums.length ? (nums.reduce((a, b) => a + b, 0) / nums.length) : null;
+  const high = nums.length ? Math.max(...nums) : null;
+
+  const save = async () => {
+    if (anyInvalid) return;
+    // Absent has no schema field, so un-entered students are simply omitted.
+    const payload = rows
+      .filter((r) => String(marks[r.enrollment_id] ?? '').trim() !== '')
+      .map((r) => ({ enrollment_id: r.enrollment_id, marks: String(marks[r.enrollment_id]).trim() }));
+    if (payload.length === 0) { setError('Enter at least one mark before saving.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      await apiFetch(`/api/exams/${id}/results`, { method: 'POST', body: { results: payload } });
+      setSavedMsg(`Results saved · ${payload.length} entered`);
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return <AdminChrome active="Exams" title="Results"><Card padding={40} style={{ textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</Card></AdminChrome>;
+  if (error && !exam) return <AdminChrome active="Exams" title="Results"><Card padding={40} style={{ textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load results: {error}</Card></AdminChrome>;
 
   return (
     <AdminChrome
       active="Exams"
-      breadcrumb={<>Exams <span style={{ color: hf.faint, padding: '0 6px' }}>/</span> Mid-term <span style={{ color: hf.faint, padding: '0 6px' }}>/</span> <span style={{ color: hf.ink2 }}>Class 2-A · Maths</span></>}
-      title="Class 2-A · Maths · Mid-term"
-      topRight={<>
-        <Btn variant="outline" size="sm" icon={I.download}>Export PDF</Btn>
-        <Btn variant="outline" size="sm" icon={I.share}>Share with teachers</Btn>
-      </>}
+      breadcrumb={<>Exams <span style={{ color: hf.faint, padding: '0 6px' }}>/</span> <span style={{ color: hf.ink2 }}>{exam?.name}</span></>}
+      title={`${exam?.class_label || ''} · ${exam?.subject || ''} · ${exam?.name || ''}`}
+      topRight={<Btn variant="outline" size="sm" onClick={() => navigate('/admin/exams')}>← Back to exams</Btn>}
     >
-      {/* Read-only banner */}
-      <div style={{
-        padding: '10px 14px', borderRadius: 10,
-        background: hf.surface2, border: `1px solid ${hf.borderS}`,
-        display: 'flex', alignItems: 'center', gap: 10, ...hfText.small, color: hf.ink2,
-      }}>
-        <span style={{ color: hf.muted, display: 'inline-flex' }}>{I.lock}</span>
-        <span>Read-only · marks entered by <b>Mrs. Kaur</b>. Edit on the teacher portal — every change is audited.</span>
-      </div>
-
       {/* Context bar */}
       <Card padding={0}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr) 1.4fr' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)' }}>
           {[
-            { label: 'Class',   value: '2-A' },
-            { label: 'Exam',    value: 'Mid-term' },
-            { label: 'Subject', value: 'Maths' },
-            { label: 'Max',     value: '50' },
-            { label: 'Date',    value: '18 Apr 2026' },
+            { label: 'Class', value: exam?.class_year_label || exam?.class_label || '—' },
+            { label: 'Subject', value: exam?.subject || '—' },
+            { label: 'Teacher', value: exam?.teacher_name || 'Unassigned' },
+            { label: 'Max', value: String(max) },
+            { label: 'Date', value: exam?.exam_date ? fmtDate(exam.exam_date) : '—' },
           ].map((f, i) => (
-            <div key={i} style={{ padding: '14px 18px', borderRight: `1px solid ${hf.borderS}` }}>
+            <div key={i} style={{ padding: '14px 18px', borderRight: i < 4 ? `1px solid ${hf.borderS}` : 'none' }}>
               <div style={{ ...hfText.micro, fontSize: 9.5 }}>{f.label}</div>
-              <div style={{ ...hfText.h2, fontSize: 16, marginTop: 4 }}>{f.value}</div>
+              <div style={{ ...hfText.h2, fontSize: 15, marginTop: 4 }}>{f.value}</div>
             </div>
           ))}
-          <div style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-              <span style={{ ...hfText.micro, fontSize: 9.5 }}>Class average</span>
-              <span style={{ ...hfText.num, fontSize: 18, fontWeight: 700, color: hf.good }}>76%</span>
-            </div>
-            <div style={{ marginTop: 8, height: 6, background: hf.surface2, borderRadius: 4, overflow: 'hidden' }}>
-              <div style={{ width: '76%', height: '100%', background: hf.good }}/>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: hf.muted, marginTop: 6, ...hfText.num }}>
-              <span>Top 47/50</span><span>Bottom 22/50</span>
-            </div>
-          </div>
         </div>
       </Card>
 
-      {/* Results table */}
+      {/* Marks entry */}
       <Card padding={0}>
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ ...hfText.h2 }}>Results · 44 of 48 entered</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Btn variant="ghost" size="sm" icon={I.filter}>Sort: roll</Btn>
-            <Btn variant="ghost" size="sm">Show distribution</Btn>
-          </div>
-        </div>
-        <div style={{
-          display: 'grid', gridTemplateColumns: '50px 36px 1.4fr 80px 80px 80px 1fr 130px',
-          padding: '11px 20px', background: hf.surface2,
-          borderBottom: `1px solid ${hf.borderS}`,
-          ...hfText.micro, fontSize: 10,
-        }}>
-          <div>Roll</div><div/><div>Student</div><div>Marks</div><div>%</div><div>Grade</div><div>Entered by</div><div style={{ textAlign: 'right' }}>Entered at</div>
-        </div>
-        {examResults.map((r, i) => {
-          const pct = r.absent ? null : Math.round((r.marks / 50) * 100);
-          const g = gradeOf(r.marks, 50);
-          return (
-            <div key={i} className="hf-row" style={{
-              display: 'grid', gridTemplateColumns: '50px 36px 1.4fr 80px 80px 80px 1fr 130px',
-              padding: '11px 20px', alignItems: 'center',
-              borderBottom: i < examResults.length - 1 ? `1px solid ${hf.borderS}` : 'none',
-            }}>
-              <div style={{ ...hfText.num, fontSize: 11.5, color: hf.muted }}>{r.roll}</div>
-              <Avatar name={r.name} size={28} />
-              <div style={{ ...hfText.small, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ ...hfText.num, fontSize: 13, fontWeight: 650, color: r.absent ? hf.warn : hf.ink }}>
-                {r.absent ? 'AB' : <>{r.marks}<span style={{ color: hf.muted, fontWeight: 500, fontSize: 11 }}> /50</span></>}
-              </div>
-              <div style={{ ...hfText.num, fontSize: 12.5, color: hf.ink2 }}>{pct != null ? `${pct}%` : '—'}</div>
-              <div>{g ? <Pill tone={g === 'A' ? 'good' : g === 'B' ? 'primary' : 'warn'} style={{ fontSize: 11, fontWeight: 700 }}>{g}</Pill> : <Pill tone="warn">AB</Pill>}</div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Avatar name={r.by} size={20} />
-                <span style={{ ...hfText.small, fontSize: 11.5, color: hf.ink2 }}>{r.by}</span>
-              </div>
-              <div style={{ ...hfText.num, fontSize: 11, color: hf.muted, textAlign: 'right' }}>{r.when}</div>
+          <div>
+            <div style={{ ...hfText.h2 }}>Marks entry</div>
+            <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>
+              {enteredCount} of {rows.length} entered{avg != null ? ` · avg ${avg.toFixed(1)} · high ${high}` : ''}
             </div>
-          );
-        })}
+          </div>
+          <Btn variant="primary" size="sm" onClick={save} disabled={saving || anyInvalid}>{saving ? 'Saving…' : 'Save results'}</Btn>
+        </div>
+
+        {savedMsg && (
+          <div style={{ margin: '12px 20px 0', ...hfText.small, color: hf.good, background: hf.goodSoft, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>{savedMsg}</div>
+        )}
+        {error && exam && (
+          <div style={{ margin: '12px 20px 0', ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{error}</div>
+        )}
+        {anyInvalid && (
+          <div style={{ margin: '12px 20px 0', ...hfText.small, color: hf.accent }}>Some marks are outside 0–{max}. Fix the highlighted rows before saving.</div>
+        )}
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: '36px 1.6fr 120px 170px',
+          padding: '11px 20px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+          ...hfText.micro, fontSize: 10, marginTop: 12,
+        }}>
+          <div /><div>Student</div><div>Adm. no</div><div>Marks</div>
+        </div>
+        {rows.length === 0 && (
+          <div style={{ padding: '30px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No active students in this class.</div>
+        )}
+        {rows.map((r, i) => (
+          <MarksEntryRow
+            key={r.enrollment_id}
+            row={r}
+            value={marks[r.enrollment_id] ?? ''}
+            max={max}
+            invalid={isInvalid(marks[r.enrollment_id])}
+            onChange={setMark(r.enrollment_id)}
+            last={i === rows.length - 1}
+          />
+        ))}
         <div style={{ padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, ...hfText.small, color: hf.muted }}>
-          4 students still pending entry · 1 absent (Ishaan Verma) — will need a retest scheduled by Mrs. Kaur.
+          Leave a student blank if not yet marked · marks save as you click "Save results".
         </div>
       </Card>
     </AdminChrome>

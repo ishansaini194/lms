@@ -993,17 +993,19 @@ const HA6Modal = ({ onClose, onSaved }) => {
 const HA7Modal = ({ onClose, onSaved, initial }) => {
   const isEdit = !!initial;
   const [f, setF] = useState({
-    class_year_id: '', name: '', subject: '', max_marks: '', exam_date: '',
+    class_year_id: '', name: '', subject: '', max_marks: '', exam_date: '', teacher_id: null,
     ...(initial || {}),
     ...(initial ? {
       class_year_id: initial.class_year_id != null ? String(initial.class_year_id) : '',
       max_marks: initial.max_marks != null ? String(initial.max_marks) : '',
       exam_date: initial.exam_date ? String(initial.exam_date).slice(0, 10) : '',
+      teacher_id: initial.teacher_id ?? null,
     } : {}),
   });
   const set = (k) => (v) => setF(p => ({ ...p, [k]: v }));
 
   const [classYears, setClassYears] = useState([]);
+  const [teachers, setTeachers] = useState([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -1014,6 +1016,14 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
       .then((data) => setClassYears(Array.isArray(data) ? data : []))
       .catch(() => setClassYears([]));
   }, [isEdit]);
+
+  // Teachers feed the searchable assignment dropdown (create + edit).
+  useEffect(() => {
+    apiFetch('/api/teachers')
+      .then((data) => setTeachers(Array.isArray(data) ? data : []))
+      .catch(() => setTeachers([]));
+  }, []);
+  const teacherOptions = teachers.map((t) => ({ value: t.id, label: t.name, sublabel: t.subject }));
 
   const cyLabel = (cy) => {
     const cls = cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}`;
@@ -1030,11 +1040,12 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
     setSaving(true);
     try {
       if (isEdit) {
-        // class_year_id is immutable on update; leave teacher_id untouched by omitting it.
+        // class_year_id is immutable on update. Send teacher_id (0 clears it).
         const body = {
           name: f.name,
           subject: f.subject,
           max_marks: Number(f.max_marks),
+          teacher_id: f.teacher_id ? Number(f.teacher_id) : 0,
         };
         if (f.exam_date) body.exam_date = new Date(f.exam_date).toISOString();
         await apiFetch(`/api/exams/${initial.id}`, { method: 'PUT', body });
@@ -1045,6 +1056,7 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
           subject: f.subject,
           max_marks: Number(f.max_marks),
         };
+        if (f.teacher_id) body.teacher_id = Number(f.teacher_id);
         if (f.exam_date) body.exam_date = new Date(f.exam_date).toISOString();
         await apiFetch('/api/exams', { method: 'POST', body });
       }
@@ -1071,14 +1083,25 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div>
-            <FieldLabel required>{isEdit ? 'Class-year' : 'Class-year'}</FieldLabel>
+            <FieldLabel required>Class-year</FieldLabel>
             {isEdit ? (
-              <FInput value={initial.class_year_label || `Class-year #${initial.class_year_id}`} disabled />
+              <FInput value={initial.class_year_label || initial.class_label || '—'} disabled />
             ) : (
               <FSelect value={f.class_year_id} onChange={set('class_year_id')}
                 options={[{ value: '', label: 'Select class-year…' },
                 ...classYears.map(cy => ({ value: String(cy.id), label: cyLabel(cy) }))]} />
             )}
+          </div>
+
+          <div>
+            <FieldLabel>Teacher</FieldLabel>
+            <SearchableSelect
+              value={f.teacher_id}
+              onChange={(v) => set('teacher_id')(v)}
+              options={teacherOptions}
+              placeholder="Assign a teacher (optional)…"
+              allowClear
+            />
           </div>
 
           <div>

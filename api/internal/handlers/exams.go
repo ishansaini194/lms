@@ -48,6 +48,94 @@ type EnterResultsRequest struct {
 	Results []ResultItem `json:"results"`
 }
 
+// examListItem enriches an Exam with class + teacher labels for the list/detail
+// views. The embedded Exam flattens into the same JSON object.
+type examListItem struct {
+	models.Exam
+	ClassYearLabel string  `json:"class_year_label"` // "2-A · 2026-27"
+	ClassLabel     string  `json:"class_label"`      // "2-A"
+	TeacherName    *string `json:"teacher_name"`     // nil if unassigned
+}
+
+// enrichExams attaches class/teacher labels via two batched queries (no N+1).
+// Order is preserved. The Exam model has no relation fields, so we join by id.
+func (h *ExamsHandler) enrichExams(schoolID uint, exams []models.Exam) []examListItem {
+	items := make([]examListItem, len(exams))
+	for i := range exams {
+		items[i] = examListItem{Exam: exams[i]}
+	}
+	if len(exams) == 0 {
+		return items
+	}
+
+	cyIDs := make([]uint, 0, len(exams))
+	teacherIDs := make([]uint, 0, len(exams))
+	for _, e := range exams {
+		cyIDs = append(cyIDs, e.ClassYearID)
+		if e.TeacherID != nil {
+			teacherIDs = append(teacherIDs, *e.TeacherID)
+		}
+	}
+
+	// class_year → class label + year label.
+	type cyRow struct {
+		ID        uint
+		Name      string
+		Section   string
+		YearLabel string
+	}
+	var cyRows []cyRow
+	h.DB.Table("class_years").
+		Select("class_years.id, classes.name, classes.section, academic_years.year_label").
+		Joins("JOIN classes ON classes.id = class_years.class_id").
+		Joins("JOIN academic_years ON academic_years.id = class_years.academic_year_id").
+		Where("class_years.school_id = ? AND class_years.id IN ?", schoolID, cyIDs).
+		Scan(&cyRows)
+	type cyLabels struct{ classLabel, yearLabel string }
+	byCY := map[uint]cyLabels{}
+	for _, r := range cyRows {
+		cl := r.Name
+		if r.Section != "" {
+			cl += "-" + r.Section
+		}
+		byCY[r.ID] = cyLabels{classLabel: cl, yearLabel: r.YearLabel}
+	}
+
+	// teacher → name.
+	teacherByID := map[uint]string{}
+	if len(teacherIDs) > 0 {
+		type tRow struct {
+			ID   uint
+			Name string
+		}
+		var tRows []tRow
+		h.DB.Table("teachers").
+			Select("id, name").
+			Where("school_id = ? AND id IN ?", schoolID, teacherIDs).
+			Scan(&tRows)
+		for _, t := range tRows {
+			teacherByID[t.ID] = t.Name
+		}
+	}
+
+	for i := range items {
+		if l, ok := byCY[items[i].ClassYearID]; ok {
+			items[i].ClassLabel = l.classLabel
+			items[i].ClassYearLabel = l.classLabel
+			if l.yearLabel != "" {
+				items[i].ClassYearLabel = l.classLabel + " · " + l.yearLabel
+			}
+		}
+		if items[i].TeacherID != nil {
+			if name, ok := teacherByID[*items[i].TeacherID]; ok {
+				n := name
+				items[i].TeacherName = &n
+			}
+		}
+	}
+	return items
+}
+
 // GET /api/exams?include_inactive=&class_year_id=&teacher_id=
 func (h *ExamsHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -77,7 +165,7 @@ func (h *ExamsHandler) List(c *fiber.Ctx) error {
 	if err := query.Order("exam_date DESC NULLS LAST, id DESC").Find(&exams).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch exams"})
 	}
-	return c.JSON(exams)
+	return c.JSON(h.enrichExams(schoolID, exams))
 }
 
 // GET /api/exams/:id
@@ -104,7 +192,7 @@ func (h *ExamsHandler) GetOne(c *fiber.Ctx) error {
 		}
 	}
 
-	return c.JSON(exam)
+	return c.JSON(h.enrichExams(schoolID, []models.Exam{exam})[0])
 }
 
 // POST /api/exams
@@ -416,13 +504,51 @@ func (h *ExamsHandler) ListResults(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 
+	// Roster: every active enrollment in the exam's class_year, with student.
+	type rosterRow struct {
+		EnrollmentID uint
+		StudentName  string
+		AdmissionNo  string
+	}
+	var roster []rosterRow
+	h.DB.Table("enrollments").
+		Select("enrollments.id as enrollment_id, students.name as student_name, students.admission_number as admission_no").
+		Joins("JOIN students ON students.id = enrollments.student_id").
+		Where("enrollments.school_id = ? AND enrollments.class_year_id = ? AND enrollments.status = ?",
+			schoolID, exam.ClassYearID, "active").
+		Order("students.name asc").
+		Scan(&roster)
+
+	// Existing marks, keyed by enrollment.
 	var results []models.Result
 	if err := h.DB.Where("exam_id = ? AND school_id = ?", exam.ID, schoolID).
-		Order("enrollment_id ASC").
 		Find(&results).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch results"})
 	}
-	return c.JSON(results)
+	marksByEnr := map[uint]string{}
+	for _, r := range results {
+		marksByEnr[r.EnrollmentID] = r.Marks.String()
+	}
+
+	// One row per active student; marks null until entered.
+	rows := make([]fiber.Map, 0, len(roster))
+	for _, e := range roster {
+		var marks interface{} = nil
+		if m, ok := marksByEnr[e.EnrollmentID]; ok {
+			marks = m
+		}
+		rows = append(rows, fiber.Map{
+			"enrollment_id": e.EnrollmentID,
+			"student_name":  e.StudentName,
+			"admission_no":  e.AdmissionNo,
+			"marks":         marks,
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"exam": h.enrichExams(schoolID, []models.Exam{exam})[0],
+		"rows": rows,
+	})
 }
 
 // --- helpers ---
