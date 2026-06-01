@@ -39,6 +39,80 @@ type noticeResponse struct {
 	ClassYearIDs []uint `json:"class_year_ids"`
 }
 
+// noticeListItem enriches a notice with the author's name and its target
+// class_year IDs (so the edit modal can prefill without a second call).
+type noticeListItem struct {
+	models.Notice
+	PostedByName string `json:"posted_by_name"`
+	ClassYearIDs []uint `json:"class_year_ids"`
+}
+
+// enrichNotices attaches author name + target class_year IDs via two batched
+// queries (no N+1). Order is preserved.
+func (h *NoticesHandler) enrichNotices(schoolID uint, notices []models.Notice) []noticeListItem {
+	items := make([]noticeListItem, len(notices))
+	for i := range notices {
+		items[i] = noticeListItem{Notice: notices[i], ClassYearIDs: []uint{}}
+	}
+	if len(notices) == 0 {
+		return items
+	}
+
+	noticeIDs := make([]uint, len(notices))
+	userIDSet := map[uint]bool{}
+	userIDs := []uint{}
+	for i, n := range notices {
+		noticeIDs[i] = n.ID
+		if !userIDSet[n.PostedByID] {
+			userIDSet[n.PostedByID] = true
+			userIDs = append(userIDs, n.PostedByID)
+		}
+	}
+
+	// Author names: display_name, falling back to username.
+	type uRow struct {
+		ID          uint
+		Username    string
+		DisplayName *string
+	}
+	var uRows []uRow
+	h.DB.Table("users").
+		Select("id, username, display_name").
+		Where("school_id = ? AND id IN ?", schoolID, userIDs).
+		Scan(&uRows)
+	nameByUser := map[uint]string{}
+	for _, u := range uRows {
+		if u.DisplayName != nil && *u.DisplayName != "" {
+			nameByUser[u.ID] = *u.DisplayName
+		} else {
+			nameByUser[u.ID] = u.Username
+		}
+	}
+
+	// Target class_year IDs grouped by notice.
+	type tRow struct {
+		NoticeID    uint
+		ClassYearID uint
+	}
+	var tRows []tRow
+	h.DB.Table("notice_targets").
+		Select("notice_id, class_year_id").
+		Where("notice_id IN ?", noticeIDs).
+		Scan(&tRows)
+	targetsByNotice := map[uint][]uint{}
+	for _, t := range tRows {
+		targetsByNotice[t.NoticeID] = append(targetsByNotice[t.NoticeID], t.ClassYearID)
+	}
+
+	for i := range items {
+		items[i].PostedByName = nameByUser[items[i].PostedByID]
+		if ids, ok := targetsByNotice[items[i].ID]; ok {
+			items[i].ClassYearIDs = ids
+		}
+	}
+	return items
+}
+
 // GET /api/notices?include_inactive=&class_year_id=
 func (h *NoticesHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -66,7 +140,7 @@ func (h *NoticesHandler) List(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch notices"})
 	}
 
-	return c.JSON(notices)
+	return c.JSON(h.enrichNotices(schoolID, notices))
 }
 
 // GET /api/notices/:id  (includes target class_year IDs)

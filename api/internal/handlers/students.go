@@ -29,6 +29,7 @@ type studentListItem struct {
 	ClassLabel string `json:"class_label"`
 	Section    string `json:"section"`
 	FeeStatus  string `json:"fee_status"` // "paid" | "partial" | "unpaid" | "" (no fees)
+	UserID     *uint  `json:"user_id"`    // linked login account, for password reset
 }
 
 // enrichStudents attaches class_label, section, and fee_status to a page of
@@ -104,11 +105,30 @@ func (h *StudentsHandler) enrichStudents(schoolID uint, students []models.Studen
 		statusByStudent[r.StudentID][r.Status] = r.Cnt
 	}
 
+	// 3. Linked login account per student (for password reset).
+	type userRow struct {
+		ID        uint
+		StudentID uint
+	}
+	var userRows []userRow
+	h.DB.Table("users").
+		Select("id, student_id").
+		Where("school_id = ? AND student_id IN ?", schoolID, ids).
+		Scan(&userRows)
+	userByStudent := map[uint]uint{}
+	for _, u := range userRows {
+		userByStudent[u.StudentID] = u.ID
+	}
+
 	for i := range items {
 		sid := items[i].ID
 		items[i].ClassLabel = labelByStudent[sid]
 		items[i].Section = sectionByStudent[sid]
 		items[i].FeeStatus = feeStatusLabel(statusByStudent[sid])
+		if uid, ok := userByStudent[sid]; ok {
+			id := uid
+			items[i].UserID = &id
+		}
 	}
 	return items
 }

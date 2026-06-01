@@ -171,29 +171,6 @@ export const AdminTopBar = ({ title, breadcrumb, right }) => (
     </div>
     <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
       {right}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 8,
-        padding: '6px 10px 6px 12px', borderRadius: 10,
-        background: hf.surface2, border: `1px solid ${hf.borderS}`,
-        color: hf.muted, fontSize: 12.5, fontFamily: hfFonts.ui,
-        minWidth: 280,
-      }}>
-        {I.search}
-        <span style={{ color: hf.faint }}>Search students, receipts, teachers…</span>
-        <span style={{ marginLeft: 'auto', fontFamily: hfFonts.mono, fontSize: 10, color: hf.faint,
-          border: `1px solid ${hf.border}`, padding: '1px 5px', borderRadius: 4 }}>⌘K</span>
-      </div>
-      <div style={{
-        position: 'relative', width: 36, height: 36, borderRadius: 9,
-        background: hf.surface2, border: `1px solid ${hf.borderS}`,
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: hf.ink2,
-      }}>
-        {I.bell}
-        <span style={{
-          position: 'absolute', top: 5, right: 6, width: 7, height: 7, borderRadius: '50%',
-          background: hf.accent, border: `2px solid ${hf.surface2}`,
-        }} />
-      </div>
     </div>
   </header>
 );

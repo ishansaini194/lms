@@ -46,10 +46,7 @@ const HA1 = () => {
   }, []);
 
   const topRight = (
-    <>
-      <Btn variant="outline" size="sm" icon={I.download}>Export</Btn>
-      <Btn variant="primary" size="sm" icon={I.card} onClick={() => navigate('/admin/fees')}>Collect fees</Btn>
-    </>
+    <Btn variant="primary" size="sm" icon={I.card} onClick={() => navigate('/admin/fees')}>Collect fees</Btn>
   );
 
   if (loading) {
@@ -285,10 +282,7 @@ const HA2 = () => {
         active="Classes"
         breadcrumb="Home · Classes"
         title="Classes"
-        topRight={<>
-          <Btn variant="outline" size="sm" icon={I.download}>Export</Btn>
-          <Btn variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add class</Btn>
-        </>}
+        topRight={<Btn variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add class</Btn>}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ ...hfText.small, color: hf.muted }}>{activeCount} active classes</span>
@@ -456,6 +450,12 @@ const HA3 = () => {
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
 
+  // Reset-password flow (mirrors the Teachers page).
+  const [resetting, setResetting] = useState(null);   // student being reset
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState('');
+  const [resetResult, setResetResult] = useState(null); // { name, password? } after success
+
   const loadStudents = () => {
     setLoading(true);
     setError(null);
@@ -512,6 +512,23 @@ const HA3 = () => {
     }
   };
 
+  const confirmReset = async () => {
+    if (!resetting) return;
+    if (!resetting.user_id) { setResetErr('No login account linked to this student.'); return; }
+    setResetBusy(true);
+    setResetErr('');
+    try {
+      // Empty body → backend resets to the default password and echoes it.
+      const res = await apiFetch(`/api/auth/reset-password/${resetting.user_id}`, { method: 'POST', body: {} });
+      setResetResult({ name: resetting.name, password: res.password || null });
+      setResetting(null);
+    } catch (e) {
+      setResetErr(e.message);
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
   // Build the edit-form prefill from a row's bare student fields.
   const editInitialFromRow = (r) => ({
     id: r.id,
@@ -538,11 +555,6 @@ const HA3 = () => {
       setDelBusy(false);
     }
   };
-
-  const toggleRow = (i) => setRows(rs => rs.map((r, j) => j === i ? { ...r, _sel: !r._sel } : r));
-  const allSel = rows.length > 0 && rows.every(r => r._sel);
-  const toggleAll = () => setRows(rs => rs.map(r => ({ ...r, _sel: !allSel })));
-  const selectedCount = rows.filter(r => r._sel).length;
 
   return (
     <>
@@ -590,35 +602,14 @@ const HA3 = () => {
           <span style={{ ...hfText.small, color: hf.muted }}>Showing {rows.length} of {total}</span>
         </div>
 
-        {/* Selection action bar */}
-        {selectedCount > 0 && (
-          <div style={{
-            padding: '10px 16px', borderRadius: 11,
-            background: hf.ink, color: '#fff',
-            display: 'flex', alignItems: 'center', gap: 12,
-          }}>
-            <div style={{
-              width: 24, height: 24, borderRadius: 6, background: hf.primary, color: '#fff',
-              display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700,
-            }}>{selectedCount}</div>
-            <span style={{ ...hfText.small, fontWeight: 600 }}>{selectedCount} students selected</span>
-            <div style={{ flex: 1 }} />
-            <button className="hf-btn" style={{ padding: '5px 10px', fontSize: 12, color: '#fff', background: 'rgba(255,255,255,0.08)', border: `1px solid rgba(255,255,255,0.15)`, borderRadius: 7 }}>Export CSV</button>
-            <button className="hf-btn" style={{ padding: '5px 10px', fontSize: 12, color: '#fff', background: 'rgba(255,255,255,0.08)', border: `1px solid rgba(255,255,255,0.15)`, borderRadius: 7 }}>Export PDF</button>
-            <button className="hf-btn" style={{ padding: '5px 10px', fontSize: 12, color: '#fff', background: 'rgba(255,255,255,0.08)', border: `1px solid rgba(255,255,255,0.15)`, borderRadius: 7 }}>Promote</button>
-            <button className="hf-btn" style={{ padding: '5px 10px', fontSize: 12, color: hf.accent, background: 'rgba(255,255,255,0.05)', border: `1px solid ${hf.accent}`, borderRadius: 7 }}>Deactivate</button>
-          </div>
-        )}
-
         {/* Table */}
         <Card padding={0}>
           <div style={{
-            display: 'grid', gridTemplateColumns: '38px 60px 30px 1.6fr 70px 70px 130px 110px 84px',
+            display: 'grid', gridTemplateColumns: '60px 30px 1.6fr 70px 70px 130px 110px 84px',
             padding: '11px 20px', background: hf.surface2,
             borderBottom: `1px solid ${hf.borderS}`,
             ...hfText.micro, fontSize: 10,
           }}>
-            <div onClick={toggleAll} className="hf-clickable"><span style={{ width: 16, height: 16, display: 'inline-flex', borderRadius: 4, background: allSel ? hf.primary : hf.surface, border: `1.5px solid ${allSel ? hf.primary : hf.faint}`, color: '#fff', alignItems: 'center', justifyContent: 'center' }}>{allSel && I.check}</span></div>
             <div>Adm. no</div>
             <div />
             <div>Name</div>
@@ -641,19 +632,10 @@ const HA3 = () => {
             <div key={r.id} className="hf-row hf-clickable"
               onClick={() => navigate(`/admin/students/${r.id}`)}
               style={{
-                display: 'grid', gridTemplateColumns: '38px 60px 30px 1.6fr 70px 70px 130px 110px 84px',
+                display: 'grid', gridTemplateColumns: '60px 30px 1.6fr 70px 70px 130px 110px 84px',
                 padding: '11px 20px', alignItems: 'center',
                 borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
-                background: r._sel ? hf.primarySoft : 'transparent',
               }}>
-              <div onClick={(e) => { e.stopPropagation(); toggleRow(i); }}>
-                <span style={{
-                  width: 16, height: 16, display: 'inline-flex', borderRadius: 4,
-                  background: r._sel ? hf.primary : hf.surface,
-                  border: `1.5px solid ${r._sel ? hf.primary : hf.faint}`,
-                  color: '#fff', alignItems: 'center', justifyContent: 'center',
-                }}>{r._sel && I.check}</span>
-              </div>
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.muted }}>{r.admission_no}</div>
               <Avatar name={r.name} size={26} />
               <div style={{ ...hfText.small, fontWeight: 600 }}>{r.name}</div>
@@ -667,6 +649,7 @@ const HA3 = () => {
                 ) : (
                   <>
                     <button onClick={(e) => { e.stopPropagation(); setEditing(editInitialFromRow(r)); }} className="hf-btn" title="Edit" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
+                    <button onClick={(e) => { e.stopPropagation(); setResetErr(''); setResetting(r); }} className="hf-btn" title="Reset password" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
                     <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(r); }} className="hf-btn" title="Deactivate" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                     </button>
@@ -715,6 +698,44 @@ const HA3 = () => {
             busy={delBusy}
             error={delErr}
           />
+        </div>
+      )}
+      {resetting && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ConfirmModal
+            title="Reset password?"
+            message={`Reset the password for ${resetting.name}? They'll get the default password and must change it on first login.`}
+            confirmLabel="Reset password"
+            danger={false}
+            onConfirm={confirmReset}
+            onCancel={() => setResetting(null)}
+            busy={resetBusy}
+            error={resetErr}
+          />
+        </div>
+      )}
+      {resetResult && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <div onClick={() => setResetResult(null)} style={{ position: 'absolute', inset: 0 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+              <ModalShell
+                title="Password reset"
+                width={420}
+                footer={<Btn variant="primary" size="md" onClick={() => setResetResult(null)}>Done</Btn>}
+              >
+                <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+                  {resetResult.name}'s password has been reset.
+                </div>
+                {resetResult.password && (
+                  <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, background: hf.surface2, border: `1px solid ${hf.borderS}` }}>
+                    <div style={{ ...hfText.micro, fontSize: 10 }}>New password</div>
+                    <div style={{ ...hfText.num, fontSize: 20, fontWeight: 700, marginTop: 4 }}>{resetResult.password}</div>
+                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 6 }}>Share this with the student · they'll be asked to change it on first login.</div>
+                  </div>
+                )}
+              </ModalShell>
+            </div>
+          </div>
         </div>
       )}
     </>

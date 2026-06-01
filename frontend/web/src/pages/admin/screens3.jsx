@@ -11,7 +11,7 @@ import {
   ModalShell, StateFrame, SearchInput, FInput,
 } from '@/components/ui/primitives';
 import {
-  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox, Dropdown,
+  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Dropdown,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
 import { HA7Modal, AcademicYearFormModal, ConfirmModal } from '@/pages/admin/extras.jsx';

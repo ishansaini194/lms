@@ -8,7 +8,7 @@ import {
   ModalShell, StateFrame, SearchInput, FilterSelect,
 } from '@/components/ui/primitives';
 import {
-  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox,
+  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
 import { TeacherFormModal, HA6Modal, ConfirmModal } from '@/pages/admin/extras.jsx';
@@ -173,9 +173,6 @@ const HA4 = () => {
       active="Fees"
       breadcrumb="Home · Fees"
       title="Fees"
-      topRight={<>
-        <Btn variant="outline" size="sm" icon={I.download}>Export ledger</Btn>
-      </>}
     >
       <Tabs items={[
         { label: 'Collect', id: 'Collect' },
@@ -933,10 +930,7 @@ const HA5 = () => {
         active="Teachers"
         breadcrumb="Home · Teachers"
         title="Teachers"
-        topRight={<>
-          <Btn variant="outline" size="sm" icon={I.download}>Export</Btn>
-          <Btn variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add teacher</Btn>
-        </>}
+        topRight={<Btn variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add teacher</Btn>}
       >
         <div style={{ ...hfText.small, color: hf.muted }}>
           {loading ? 'Loading…' : `${total} teachers · ${activeCount} active · ${inactiveCount} inactive`}
@@ -1089,7 +1083,9 @@ const HA5 = () => {
 // ─── A6 · Notices ─────────────────────────────────────────────────────────
 const HA6 = () => {
   const [showCompose, setShowCompose] = useState(false);
+  const [editing, setEditing] = useState(null); // notice being edited
   const [chip, setChip] = useState('All');
+  const [search, setSearch] = useState('');
   const [notices, setNotices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1103,9 +1099,11 @@ const HA6 = () => {
   };
   useEffect(() => { loadNotices(); }, []);
 
+  const q = search.trim().toLowerCase();
   const shown = notices.filter((n) => {
-    if (chip === 'School-wide') return n.target_all_school;
-    if (chip === 'Class-specific') return !n.target_all_school;
+    if (chip === 'School-wide' && !n.target_all_school) return false;
+    if (chip === 'Class-specific' && n.target_all_school) return false;
+    if (q && !`${n.title || ''} ${n.body || ''}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -1124,7 +1122,7 @@ const HA6 = () => {
           <Chip active={chip === 'School-wide'} onClick={() => setChip('School-wide')}>School-wide · {notices.filter(n => n.target_all_school).length}</Chip>
           <Chip active={chip === 'Class-specific'} onClick={() => setChip('Class-specific')}>Class-specific · {notices.filter(n => !n.target_all_school).length}</Chip>
           <div style={{ flex: 1 }} />
-          <Searchbox placeholder="Search notices…" width={260} />
+          <SearchInput value={search} onChange={setSearch} placeholder="Search notices…" width={260} />
         </div>
 
         {loading && (
@@ -1149,12 +1147,14 @@ const HA6 = () => {
                 borderTopLeftRadius: 12, borderBottomLeftRadius: 12,
               }}>
                 <div style={{ padding: '14px 18px' }}>
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 8 }}>
                     <div style={{ ...hfText.h2, fontSize: 15, lineHeight: 1.35, flex: 1 }}>{n.title}</div>
                     <Pill tone={all ? 'primary' : 'accent'} style={{ fontSize: 10.5, flexShrink: 0 }}>{all ? 'All school' : 'Class-specific'}</Pill>
+                    <button onClick={() => setEditing(n)} className="hf-btn" title="Edit notice" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}>✎</button>
                   </div>
                   <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5, marginBottom: 10, whiteSpace: 'pre-wrap' }}>{n.body}</div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {n.posted_by_name && <span style={{ ...hfText.small, fontSize: 11, color: hf.muted }}>Posted by {n.posted_by_name}</span>}
                     <div style={{ flex: 1 }} />
                     <span style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{n.created_at ? new Date(n.created_at).toLocaleDateString() : ''}</span>
                   </div>
@@ -1168,6 +1168,11 @@ const HA6 = () => {
       {showCompose && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
           <HA6Modal onClose={() => setShowCompose(false)} onSaved={() => { setShowCompose(false); loadNotices(); }} />
+        </div>
+      )}
+      {editing && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <HA6Modal initial={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); loadNotices(); }} />
         </div>
       )}
     </>

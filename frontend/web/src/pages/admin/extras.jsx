@@ -10,7 +10,7 @@ import {
   ModalShell, StateFrame, FInput, FSelect, FTextarea, SearchableSelect,
 } from '@/components/ui/primitives';
 import {
-  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox, Dropdown,
+  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
 import {
@@ -865,11 +865,12 @@ const HA5Modal = ({ onClose }) => (
 );
 
 // ─── A6 modal · Compose notice ────────────────────────────────────────────
-const HA6Modal = ({ onClose, onSaved }) => {
-  const [f, setF] = useState({ title: '', body: '' });
+const HA6Modal = ({ onClose, onSaved, initial }) => {
+  const isEdit = !!initial;
+  const [f, setF] = useState({ title: initial?.title || '', body: initial?.body || '' });
   const set = (k) => (v) => setF(p => ({ ...p, [k]: v }));
-  const [wholeSchool, setWholeSchool] = useState(true);
-  const [selectedIds, setSelectedIds] = useState([]);
+  const [wholeSchool, setWholeSchool] = useState(initial ? !!initial.target_all_school : true);
+  const [selectedIds, setSelectedIds] = useState(initial?.class_year_ids || []);
   const [classYears, setClassYears] = useState([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -898,10 +899,19 @@ const HA6Modal = ({ onClose, onSaved }) => {
     }
     setSaving(true);
     try {
-      const body = wholeSchool
-        ? { title: f.title, body: f.body, target_all_school: true }
-        : { title: f.title, body: f.body, target_all_school: false, class_year_ids: selectedIds };
-      await apiFetch('/api/notices', { method: 'POST', body });
+      // Always send target_all_school + class_year_ids so edits to targeting
+      // (whole-school ↔ class-specific, in either direction) apply correctly.
+      const body = {
+        title: f.title.trim(),
+        body: f.body.trim(),
+        target_all_school: wholeSchool,
+        class_year_ids: wholeSchool ? [] : selectedIds,
+      };
+      if (isEdit) {
+        await apiFetch(`/api/notices/${initial.id}`, { method: 'PUT', body });
+      } else {
+        await apiFetch('/api/notices', { method: 'POST', body });
+      }
       onSaved?.();
     } catch (e) {
       setErr(e.message);
@@ -913,13 +923,13 @@ const HA6Modal = ({ onClose, onSaved }) => {
   return (
     <FormModal onClose={onClose}>
       <ModalShell
-        title="New notice"
+        title={isEdit ? 'Edit notice' : 'New notice'}
         subtitle="Post to the whole school or specific classes"
         width={540}
         footer={<>
           <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
           <Btn variant="primary" size="md" onClick={handleSave} disabled={saving}>
-            {saving ? 'Posting…' : 'Post notice'}
+            {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Post notice')}
           </Btn>
         </>}
       >
