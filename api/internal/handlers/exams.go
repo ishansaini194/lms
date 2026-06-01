@@ -397,18 +397,19 @@ func (h *ExamsHandler) EnterResults(c *fiber.Ctx) error {
 
 	// Fetch exam (need max_marks + tenancy)
 	var exam models.Exam
+	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&exam).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
 	// Teacher can only enter results for their own exam
 	if isTeacher(c) {
 		tid := middleware.GetTeacherID(c)
 		if exam.TeacherID == nil || *exam.TeacherID != tid {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
 		}
-	}
-	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&exam).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
-		}
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 	maxMarks := decimal.NewFromInt(int64(exam.MaxMarks))
 
@@ -488,20 +489,19 @@ func (h *ExamsHandler) ListResults(c *fiber.Ctx) error {
 
 	// Confirm exam belongs to school
 	var exam models.Exam
-
-	// Teacher can only enter results for their own exam
-	if isTeacher(c) {
-		tid := middleware.GetTeacherID(c)
-		if exam.TeacherID == nil || *exam.TeacherID != tid {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
-		}
-	}
-
 	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&exam).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
+	// Teacher can only view results for their own exam
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
 	}
 
 	// Roster: every active enrollment in the exam's class_year, with student.
