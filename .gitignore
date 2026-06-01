@@ -1,0 +1,29 @@
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Runtime data
+/api/uploads/
+
+# JavaScript
+node_modules/
+dist/
+coverage/
+*.log
+
+# Go
+bin/
+*.test
+*.out
+
+# Local assistant metadata
+.agents/
+.claude/
+.codex/
+
+# Editor and OS files
+.idea/
+.vscode/
+.DS_Store
+*.swp

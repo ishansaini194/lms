@@ -7,7 +7,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame, FInput, FSelect, FTextarea,
+  ModalShell, StateFrame, FInput, FSelect, FTextarea, SearchableSelect,
 } from '@/components/ui/primitives';
 import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox, Dropdown,
@@ -509,6 +509,155 @@ const ClassFormModal = ({ onClose, onSaved, initial }) => {
             ...hfText.small, color: hf.muted, lineHeight: 1.5,
           }}>
             Tuition, transport fees, and the class teacher are set per academic year on the class-year record, not here.
+          </div>
+          {err && (
+            <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
+          )}
+        </div>
+      </ModalShell>
+    </FormModal>
+  );
+};
+
+// ─── A2 modal · Set up a class for the current academic year ──────────────
+// Creates a class_year (fees + optional teacher) for a class that has none yet.
+const ClassYearSetupModal = ({ onClose, onSaved, classItem, academicYearId, yearLabel }) => {
+  const [f, setF] = useState({ tuition_fee: '', transport_fee: '', class_teacher_id: null });
+  const set = (k) => (v) => setF(p => ({ ...p, [k]: v }));
+  const [teachers, setTeachers] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    apiFetch('/api/teachers')
+      .then((data) => setTeachers(Array.isArray(data) ? data : []))
+      .catch(() => setTeachers([]));
+  }, []);
+
+  const teacherOptions = teachers.map(t => ({ value: t.id, label: t.name, sublabel: t.subject }));
+  const title = `${classItem.name}${classItem.section ? '-' + classItem.section : ''}`;
+
+  const handleSave = async () => {
+    setErr('');
+    if (f.tuition_fee.trim() === '' || isNaN(Number(f.tuition_fee))) { setErr('Enter a valid tuition fee.'); return; }
+    if (f.transport_fee.trim() === '' || isNaN(Number(f.transport_fee))) { setErr('Enter a valid transport fee.'); return; }
+    if (!academicYearId) { setErr('No current academic year is set. Set one in Settings first.'); return; }
+    setSaving(true);
+    try {
+      const body = {
+        class_id: classItem.id,
+        academic_year_id: academicYearId,
+        tuition_fee: String(f.tuition_fee).trim(),
+        transport_fee: String(f.transport_fee).trim(),
+      };
+      if (f.class_teacher_id) body.class_teacher_id = f.class_teacher_id;
+      await apiFetch('/api/class-years', { method: 'POST', body });
+      onSaved?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <FormModal onClose={onClose}>
+      <ModalShell
+        title={`Set up ${title}`}
+        subtitle={`Fees and class teacher for ${yearLabel || 'the current year'}`}
+        width={480}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Set up class'}
+          </Btn>
+        </>}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Row2>
+            <div>
+              <FieldLabel required>Tuition / mo</FieldLabel>
+              <FInput value={f.tuition_fee} onChange={set('tuition_fee')} placeholder="e.g. 2500" />
+            </div>
+            <div>
+              <FieldLabel required>Transport / mo</FieldLabel>
+              <FInput value={f.transport_fee} onChange={set('transport_fee')} placeholder="e.g. 500" />
+            </div>
+          </Row2>
+          <div>
+            <FieldLabel>Class teacher</FieldLabel>
+            <SearchableSelect
+              value={f.class_teacher_id}
+              onChange={(v) => set('class_teacher_id')(v)}
+              options={teacherOptions}
+              placeholder="Select class teacher (optional)…"
+            />
+          </div>
+          {err && (
+            <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
+          )}
+        </div>
+      </ModalShell>
+    </FormModal>
+  );
+};
+
+// ─── A2 modal · Assign / change a class teacher for an existing class_year ─
+const AssignTeacherModal = ({ onClose, onSaved, classItem }) => {
+  const [teachers, setTeachers] = useState([]);
+  const [teacherId, setTeacherId] = useState(classItem.class_teacher_id ?? null);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    apiFetch('/api/teachers')
+      .then((data) => setTeachers(Array.isArray(data) ? data : []))
+      .catch(() => setTeachers([]));
+  }, []);
+
+  const teacherOptions = teachers.map(t => ({ value: t.id, label: t.name, sublabel: t.subject }));
+  const title = `${classItem.name}${classItem.section ? '-' + classItem.section : ''}`;
+
+  const handleSave = async () => {
+    setErr('');
+    setSaving(true);
+    try {
+      // PUT class-year: send the teacher id, or 0 to clear (per UpdateClassYearRequest).
+      await apiFetch(`/api/class-years/${classItem.class_year_id}`, {
+        method: 'PUT',
+        body: { class_teacher_id: teacherId || 0 },
+      });
+      onSaved?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <FormModal onClose={onClose}>
+      <ModalShell
+        title={`Class teacher · ${title}`}
+        subtitle="Assign or change the class teacher for this year"
+        width={460}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={handleSave} disabled={saving}>
+            {saving ? 'Saving…' : 'Save'}
+          </Btn>
+        </>}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <FieldLabel>Class teacher</FieldLabel>
+            <SearchableSelect
+              value={teacherId}
+              onChange={(v) => setTeacherId(v)}
+              options={teacherOptions}
+              placeholder="Select a teacher…"
+              allowClear
+            />
           </div>
           {err && (
             <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
@@ -1252,6 +1401,7 @@ const AStToastDenied = () => (
 
 export {
   StudentFormModal, TeacherFormModal, ClassFormModal, AcademicYearFormModal,
+  ClassYearSetupModal, AssignTeacherModal,
   HA5Modal, HA6Modal, HA7Modal, ConfirmModal,
   AStLoading, AStEmpty, AStError, AStConfirm, AStToastDenied,
 };

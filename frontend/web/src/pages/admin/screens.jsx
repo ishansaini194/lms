@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '@/lib/api';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
@@ -9,10 +9,10 @@ import {
   ModalShell, StateFrame, SearchInput, FilterSelect,
 } from '@/components/ui/primitives';
 import {
-  AdminChrome, AdminTopBar, Tabs, Segmented, Searchbox,
+  AdminChrome, AdminTopBar, Tabs, Segmented,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { StudentFormModal, ClassFormModal, ConfirmModal } from '@/pages/admin/extras.jsx';
+import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal } from '@/pages/admin/extras.jsx';
 
 // Admin hi-fi · A1 Dashboard · A2 Classes · A3 Students · A3 Student detail
 
@@ -226,6 +226,12 @@ const HA2 = () => {
   const [classes, setClasses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
+
+  // Current academic year — needed to set up a class_year and to label the UI.
+  const [currentYear, setCurrentYear] = useState(null); // { id, year_label } | null
+  const [settingUp, setSettingUp] = useState(null);     // class being set up
+  const [assigning, setAssigning] = useState(null);     // class whose teacher is being assigned
 
   const loadClasses = () => {
     setLoading(true);
@@ -235,6 +241,20 @@ const HA2 = () => {
       .finally(() => setLoading(false));
   };
   useEffect(() => { loadClasses(); }, []);
+
+  useEffect(() => {
+    apiFetch('/api/academic-years')
+      .then((years) => {
+        const cur = Array.isArray(years) && years.find((y) => y.is_current === true);
+        if (cur) setCurrentYear({ id: cur.id, year_label: cur.year_label });
+      })
+      .catch(() => {});
+  }, []);
+
+  const q = search.trim().toLowerCase();
+  const visibleClasses = q
+    ? classes.filter((c) => `${c.name}${c.section ? '-' + c.section : ''}`.toLowerCase().includes(q))
+    : classes;
 
   const confirmDelete = async () => {
     if (!deleting) return;
@@ -267,7 +287,7 @@ const HA2 = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ ...hfText.small, color: hf.muted }}>{activeCount} active classes</span>
           <div style={{ flex: 1 }} />
-          <Searchbox placeholder="Search by class…" width={260} />
+          <SearchInput value={search} onChange={setSearch} placeholder="Search by class…" width={260} />
         </div>
 
         {loading && (
@@ -279,19 +299,26 @@ const HA2 = () => {
         {!loading && !error && classes.length === 0 && (
           <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No classes yet.</div>
         )}
+        {!loading && !error && classes.length > 0 && visibleClasses.length === 0 && (
+          <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No classes match "{search}".</div>
+        )}
 
-        {!loading && !error && classes.length > 0 && (
+        {!loading && !error && visibleClasses.length > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
-          {classes.map((c) => {
+          {visibleClasses.map((c) => {
             const title = `${c.name}${c.section ? '-' + c.section : ''}`;
+            const isSetUp = c.class_year_id != null;
+            const yearLabel = currentYear?.year_label || 'this year';
             return (
-              <Card key={c.id} padding={0} className="hf-clickable"
-                onClick={() => navigate('/admin/students')}
+              <Card key={c.id} padding={0} className={isSetUp ? 'hf-clickable' : undefined}
+                onClick={isSetUp ? () => navigate(`/admin/students?class_year_id=${c.class_year_id}`) : undefined}
                 style={{ border: `1px solid ${hf.border}`, background: hf.surface }}>
                 <div style={{ padding: '16px 18px 12px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                   <div>
                     <div style={{ ...hfText.display, fontSize: 28, lineHeight: 1 }}>{title}</div>
-                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 6 }}>— students enrolled</div>
+                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 6 }}>
+                      {isSetUp ? `${c.student_count} students enrolled` : `Not set up for ${yearLabel}`}
+                    </div>
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {c.board && <Pill tone="neutral">{String(c.board).toUpperCase()}</Pill>}
@@ -302,31 +329,48 @@ const HA2 = () => {
                   </div>
                 </div>
 
-                <div style={{
-                  borderTop: `1px solid ${hf.borderS}`,
-                  padding: '12px 18px',
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  background: hf.surface2,
-                }}>
-                  <div style={{
-                    width: 28, height: 28, borderRadius: 7,
-                    border: `1px dashed ${hf.faint}`, background: hf.surface,
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    color: hf.faint, fontSize: 14,
-                  }}>?</div>
-                  <span style={{ ...hfText.small, color: hf.muted }}>Teacher assigned per year</span>
-                </div>
+                {isSetUp ? (
+                  <>
+                    {/* Teacher strip */}
+                    <div style={{
+                      borderTop: `1px solid ${hf.borderS}`,
+                      padding: '12px 18px',
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      background: hf.surface2,
+                    }}>
+                      <Avatar name={c.class_teacher || '?'} size={28} />
+                      <span style={{ ...hfText.small, color: c.class_teacher ? hf.ink2 : hf.muted, fontWeight: c.class_teacher ? 600 : 400, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.class_teacher || 'No class teacher'}
+                      </span>
+                      <Btn variant="ghost" size="sm" onClick={(e) => { e.stopPropagation(); setAssigning(c); }}>
+                        {c.class_teacher ? 'Change' : 'Assign'}
+                      </Btn>
+                    </div>
 
-                <div style={{ padding: '12px 18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, borderTop: `1px solid ${hf.borderS}` }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Tuition / mo</div>
-                    <div style={{ ...hfText.num, fontSize: 16, fontWeight: 700, marginTop: 3, color: hf.muted }}>—</div>
+                    <div style={{ padding: '12px 18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, borderTop: `1px solid ${hf.borderS}` }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Tuition / mo</div>
+                        <div style={{ ...hfText.num, fontSize: 16, fontWeight: 700, marginTop: 3, color: hf.ink }}>₹{c.tuition_fee}</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Transport / mo</div>
+                        <div style={{ ...hfText.num, fontSize: 16, fontWeight: 700, marginTop: 3, color: hf.ink }}>₹{c.transport_fee}</div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{
+                    borderTop: `1px solid ${hf.borderS}`,
+                    padding: '16px 18px',
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+                    background: hf.surface2,
+                  }}>
+                    <span style={{ ...hfText.small, color: hf.muted }}>No fees or teacher yet</span>
+                    <Btn variant="soft" size="sm" onClick={(e) => { e.stopPropagation(); setSettingUp(c); }}>
+                      Set up for {yearLabel}
+                    </Btn>
                   </div>
-                  <div>
-                    <div style={{ fontSize: 10, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Transport / mo</div>
-                    <div style={{ ...hfText.num, fontSize: 16, fontWeight: 700, marginTop: 3, color: hf.muted }}>—</div>
-                  </div>
-                </div>
+                )}
               </Card>
             );
           })}
@@ -356,6 +400,26 @@ const HA2 = () => {
           />
         </div>
       )}
+      {settingUp && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ClassYearSetupModal
+            classItem={settingUp}
+            academicYearId={currentYear?.id}
+            yearLabel={currentYear?.year_label}
+            onClose={() => setSettingUp(null)}
+            onSaved={() => { setSettingUp(null); loadClasses(); }}
+          />
+        </div>
+      )}
+      {assigning && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <AssignTeacherModal
+            classItem={assigning}
+            onClose={() => setAssigning(null)}
+            onSaved={() => { setAssigning(null); loadClasses(); }}
+          />
+        </div>
+      )}
     </>
   );
 };
@@ -363,12 +427,14 @@ const HA2 = () => {
 // ─── A3 · Students (table + filters) ──────────────────────────────────────
 const HA3 = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [showAdd, setShowAdd] = useState(false);
 
   // Filters / pagination driving the list fetch.
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
-  const [classFilter, setClassFilter] = useState('');           // class_year_id, '' = all
+  // Pre-select the class filter when arriving from a class card (?class_year_id=).
+  const [classFilter, setClassFilter] = useState(() => searchParams.get('class_year_id') || '');
   const [statusFilter, setStatusFilter] = useState('active');   // 'active' | 'inactive'
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);

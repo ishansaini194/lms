@@ -35,6 +35,20 @@ type ReorderRequest struct {
 	Order []ReorderItem `json:"order"`
 }
 
+// classListItem enriches a Class with its current-AY class_year data (fees,
+// class teacher, student count). Nil class-year fields mean the class hasn't
+// been set up for the current academic year. The embedded Class flattens into
+// the same JSON object, so existing fields are unchanged.
+type classListItem struct {
+	models.Class
+	ClassYearID    *uint   `json:"class_year_id"`    // nil if not set up for current AY
+	TuitionFee     *string `json:"tuition_fee"`      // decimal string, nil if no class_year
+	TransportFee   *string `json:"transport_fee"`    // decimal string, nil if no class_year
+	ClassTeacherID *uint   `json:"class_teacher_id"` // nil if unassigned/no class_year
+	ClassTeacher   *string `json:"class_teacher"`    // teacher name, nil if unassigned/no class_year
+	StudentCount   int     `json:"student_count"`    // active enrollments in that class_year
+}
+
 func (h *ClassHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 	includeInactive, _ := strconv.ParseBool(c.Query("include_inactive"))
@@ -49,7 +63,93 @@ func (h *ClassHandler) List(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to fetch classes"})
 	}
 
-	return c.JSON(classes)
+	return c.JSON(h.enrichClasses(schoolID, classes))
+}
+
+// enrichClasses attaches current-AY class_year info (class_year_id, fees,
+// class teacher name, active student count) to each class via batched queries
+// (no N+1). Order is preserved. Classes not set up for the current AY — or any
+// class when there is no current AY — keep nil class-year fields and count 0.
+func (h *ClassHandler) enrichClasses(schoolID uint, classes []models.Class) []classListItem {
+	items := make([]classListItem, len(classes))
+	for i := range classes {
+		items[i] = classListItem{Class: classes[i]}
+	}
+	if len(classes) == 0 {
+		return items
+	}
+
+	ids := make([]uint, len(classes))
+	for i := range classes {
+		ids[i] = classes[i].ID
+	}
+
+	// Resolve the current academic year (standard is_current lookup).
+	var currentAY models.AcademicYear
+	if h.DB.Where("school_id = ? AND is_current = ?", schoolID, true).First(&currentAY).Error != nil {
+		return items // no current AY → leave everything nil/0
+	}
+
+	// 1. Current-AY class_years for these classes, with their class teacher.
+	// Only active class_years count as "set up" — a deactivated one shouldn't.
+	var classYears []models.ClassYear
+	h.DB.Where("school_id = ? AND academic_year_id = ? AND class_id IN ? AND is_active = ?", schoolID, currentAY.ID, ids, true).
+		Preload("ClassTeacher").
+		Find(&classYears)
+
+	type cyInfo struct {
+		id        uint
+		tuition   string
+		transport string
+		teacherID *uint
+		teacher   *string
+	}
+	byClass := map[uint]cyInfo{}
+	cyIDs := make([]uint, 0, len(classYears))
+	for _, cy := range classYears {
+		info := cyInfo{id: cy.ID, tuition: cy.TuitionFee.String(), transport: cy.TransportFee.String(), teacherID: cy.ClassTeacherID}
+		if cy.ClassTeacher != nil {
+			name := cy.ClassTeacher.Name
+			info.teacher = &name
+		}
+		byClass[cy.ClassID] = info
+		cyIDs = append(cyIDs, cy.ID)
+	}
+
+	// 2. Active enrollment counts grouped by class_year.
+	countByCY := map[uint]int{}
+	if len(cyIDs) > 0 {
+		type cntRow struct {
+			ClassYearID uint
+			Cnt         int
+		}
+		var rows []cntRow
+		h.DB.Table("enrollments").
+			Select("class_year_id, COUNT(*) as cnt").
+			Where("school_id = ? AND class_year_id IN ? AND status = ?", schoolID, cyIDs, "active").
+			Group("class_year_id").
+			Scan(&rows)
+		for _, r := range rows {
+			countByCY[r.ClassYearID] = r.Cnt
+		}
+	}
+
+	for i := range items {
+		info, ok := byClass[items[i].ID]
+		if !ok {
+			continue
+		}
+		cyID := info.id
+		tuition := info.tuition
+		transport := info.transport
+		items[i].ClassYearID = &cyID
+		items[i].TuitionFee = &tuition
+		items[i].TransportFee = &transport
+		items[i].ClassTeacherID = info.teacherID
+		items[i].ClassTeacher = info.teacher
+		items[i].StudentCount = countByCY[cyID]
+	}
+	return items
 }
 
 func (h *ClassHandler) GetOne(c *fiber.Ctx) error {
