@@ -74,6 +74,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	students.Post("/", studentsHandler.CreateStudent)
 	students.Put("/:id", studentsHandler.UpdateStudent)
 	students.Delete("/:id", studentsHandler.DeleteStudent)
+	students.Post("/:id/reactivate", studentsHandler.ReactivateStudent)
 
 	// Academic Years (no DELETE — edit only)
 	academicYearHandler := handlers.NewAcademicYearHandler(db)

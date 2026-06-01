@@ -21,6 +21,119 @@ func NewStudentsHandler(db *gorm.DB) *StudentsHandler {
 	return &StudentsHandler{DB: db}
 }
 
+// studentListItem enriches a Student with class/section and a fee-status summary
+// for the list and detail responses. The embedded Student flattens into the same
+// JSON object, so existing fields are unchanged and these are added alongside.
+type studentListItem struct {
+	models.Student
+	ClassLabel string `json:"class_label"`
+	Section    string `json:"section"`
+	FeeStatus  string `json:"fee_status"` // "paid" | "partial" | "unpaid" | "" (no fees)
+}
+
+// enrichStudents attaches class_label, section, and fee_status to a page of
+// students using two batched queries (no N+1). Order is preserved.
+func (h *StudentsHandler) enrichStudents(schoolID uint, students []models.Student) []studentListItem {
+	items := make([]studentListItem, len(students))
+	for i := range students {
+		items[i] = studentListItem{Student: students[i]}
+	}
+	if len(students) == 0 {
+		return items
+	}
+
+	ids := make([]uint, len(students))
+	for i := range students {
+		ids[i] = students[i].ID
+	}
+
+	// Resolve the current academic year (reuse the standard is_current lookup the
+	// scheduler/dashboard use) so a student's class reflects this year, not a
+	// stale enrollment from a prior year.
+	var currentAY models.AcademicYear
+	hasCurrentAY := h.DB.Where("school_id = ? AND is_current = ?", schoolID, true).First(&currentAY).Error == nil
+
+	// 1. Class + section from the active enrollment → class_year → class.
+	type classRow struct {
+		StudentID uint
+		Name      string
+		Section   string
+	}
+	var classRows []classRow
+	classQ := h.DB.Table("enrollments").
+		Select("enrollments.student_id, classes.name, classes.section").
+		Joins("JOIN class_years ON class_years.id = enrollments.class_year_id").
+		Joins("JOIN classes ON classes.id = class_years.class_id").
+		Where("enrollments.school_id = ? AND enrollments.student_id IN ? AND enrollments.status = ?",
+			schoolID, ids, "active")
+	if hasCurrentAY {
+		classQ = classQ.Where("class_years.academic_year_id = ?", currentAY.ID)
+	}
+	classQ.Scan(&classRows)
+
+	labelByStudent := map[uint]string{}
+	sectionByStudent := map[uint]string{}
+	for _, r := range classRows {
+		label := r.Name
+		if r.Section != "" {
+			label += "-" + r.Section
+		}
+		labelByStudent[r.StudentID] = label
+		sectionByStudent[r.StudentID] = r.Section
+	}
+
+	// 2. Fee status: count fees per student grouped by status (via enrollment join).
+	type feeRow struct {
+		StudentID uint
+		Status    string
+		Cnt       int
+	}
+	var feeRows []feeRow
+	h.DB.Table("fees").
+		Select("enrollments.student_id, fees.status, COUNT(*) as cnt").
+		Joins("JOIN enrollments ON enrollments.id = fees.enrollment_id").
+		Where("enrollments.school_id = ? AND enrollments.student_id IN ?", schoolID, ids).
+		Group("enrollments.student_id, fees.status").
+		Scan(&feeRows)
+
+	statusByStudent := map[uint]map[string]int{}
+	for _, r := range feeRows {
+		if statusByStudent[r.StudentID] == nil {
+			statusByStudent[r.StudentID] = map[string]int{}
+		}
+		statusByStudent[r.StudentID][r.Status] = r.Cnt
+	}
+
+	for i := range items {
+		sid := items[i].ID
+		items[i].ClassLabel = labelByStudent[sid]
+		items[i].Section = sectionByStudent[sid]
+		items[i].FeeStatus = feeStatusLabel(statusByStudent[sid])
+	}
+	return items
+}
+
+// feeStatusLabel derives a single status pill from a status→count map:
+//   no fees → "", all paid → "paid", any partial or some paid → "partial",
+//   otherwise (all unpaid) → "unpaid".
+func feeStatusLabel(counts map[string]int) string {
+	total := 0
+	for _, c := range counts {
+		total += c
+	}
+	if total == 0 {
+		return ""
+	}
+	paid := counts["paid"]
+	if paid == total {
+		return "paid"
+	}
+	if counts["partial"] > 0 || paid > 0 {
+		return "partial"
+	}
+	return "unpaid"
+}
+
 // GET /api/students
 func (h *StudentsHandler) ListStudents(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -77,7 +190,7 @@ func (h *StudentsHandler) ListStudents(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"data":        students,
+		"data":        h.enrichStudents(schoolID, students),
 		"total":       total,
 		"page":        page,
 		"limit":       limit,
@@ -101,7 +214,8 @@ func (h *StudentsHandler) GetStudent(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
-	return c.JSON(student)
+	// Enrich with class_label / section / fee_status (same shape as the list rows).
+	return c.JSON(h.enrichStudents(schoolID, []models.Student{student})[0])
 }
 
 // POST /api/students
@@ -349,4 +463,44 @@ func (h *StudentsHandler) DeleteStudent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to deactivate"})
 	}
 	return c.JSON(fiber.Map{"message": "student deactivated"})
+}
+
+// POST /api/students/:id/reactivate — flips a soft-deleted student back to
+// active (and re-enables their login). Mirrors DeleteStudent's structure.
+func (h *StudentsHandler) ReactivateStudent(c *fiber.Ctx) error {
+	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid student id"})
+	}
+
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Student{}).
+			Where("id = ? AND school_id = ?", id, schoolID).
+			Update("is_active", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		return tx.Model(&models.User{}).
+			Where("student_id = ? AND school_id = ?", id, schoolID).
+			Update("is_active", true).Error
+	})
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "student not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to reactivate"})
+	}
+
+	var student models.Student
+	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&student).Error; err != nil {
+		return c.JSON(fiber.Map{"ok": true})
+	}
+	return c.JSON(h.enrichStudents(schoolID, []models.Student{student})[0])
 }
