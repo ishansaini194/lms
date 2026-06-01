@@ -87,3 +87,34 @@ body {
     transform: translateY(0);
   }
 }
+
+/* ─── Thermal fee receipt (80mm browser print) ─────────────────────────── */
+/* On screen, the print node is never shown. */
+.print-only { display: none; }
+
+@page { size: 80mm auto; margin: 0; }
+
+@media print {
+  /* Hide the entire app… */
+  body * { visibility: hidden; }
+  /* …show only the thermal receipt and its subtree. */
+  .print-only, .print-only * { visibility: visible; }
+  .print-only {
+    display: block;
+    position: absolute; left: 0; top: 0;
+    width: 80mm;
+    padding: 4mm 3mm;            /* safe margins inside the 80mm roll (~72-74mm printable) */
+    box-sizing: border-box;
+    color: #000; background: #fff;
+  }
+  .thermal-receipt {
+    width: 100%;
+    font-family: 'IBM Plex Mono', ui-monospace, monospace;
+    color: #000;
+    font-size: 11px;
+    line-height: 1.35;
+  }
+  .thermal-receipt .rule { border-top: 1px dashed #000; margin: 6px 0; }
+  /* No app shadows/rounding/backgrounds bleed into the printed receipt. */
+  .thermal-receipt * { box-shadow: none !important; border-radius: 0 !important; background: transparent !important; color: #000 !important; }
+}

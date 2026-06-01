@@ -102,14 +102,18 @@ const HA1 = () => {
             </div>
           </div>
           <Btn variant="outline" size="sm">Send reminder</Btn>
-          <Btn variant="accent" size="sm" onClick={() => navigate('/admin/fees')}>Collect fees →</Btn>
+          <Btn variant="accent" size="sm" onClick={() => navigate('/admin/fees?tab=pending')}>View pending →</Btn>
         </div>
       )}
 
       {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
-        <Stat label="Total students" value={stats.total_students} tone="good" icon={<span style={{ color: hf.muted }}>{I.user}</span>} />
-        <Stat label="Pending fees" value={`₹${stats.pending_fees.total}`} hint={`across ${stats.pending_fees.count} students`} tone="accent" icon={<span style={{ color: hf.accent }}>{I.card}</span>} />
+        <div className="hf-clickable" onClick={() => navigate('/admin/students')}>
+          <Stat label="Total students" value={stats.total_students} tone="good" icon={<span style={{ color: hf.muted }}>{I.user}</span>} />
+        </div>
+        <div className="hf-clickable" onClick={() => navigate('/admin/fees?tab=pending')}>
+          <Stat label="Pending fees" value={`₹${stats.pending_fees.total}`} hint={`across ${stats.pending_fees.count} students`} tone="accent" icon={<span style={{ color: hf.accent }}>{I.card}</span>} />
+        </div>
         <Stat label="Collected this month" value={`₹${stats.collected_this_month}`} tone="good" icon={<span style={{ color: hf.good }}>{I.receipt}</span>} />
         <Stat label="Active classes" value={stats.active_classes} hint={stats.current_academic_year ? `AY ${stats.current_academic_year}` : undefined} icon={<span style={{ color: hf.muted }}>{I.grid}</span>} />
       </div>
@@ -147,7 +151,7 @@ const HA1 = () => {
               <div style={{ ...hfText.h2 }}>Recent payments</div>
               <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>Last {recent.length} entries</div>
             </div>
-            <Btn variant="ghost" size="sm" onClick={() => navigate('/admin/fees')}>View all {I.chev}</Btn>
+            <Btn variant="ghost" size="sm" onClick={() => navigate('/admin/fees?tab=recent')}>View all {I.chev}</Btn>
           </div>
           <div style={{
             display: 'grid', gridTemplateColumns: '34px 1fr 120px 90px 70px 70px',
@@ -160,7 +164,9 @@ const HA1 = () => {
             <div style={{ padding: '24px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No payments yet.</div>
           )}
           {recent.map((p, i) => (
-            <div key={i} className="hf-row" style={{
+            <div key={i} className="hf-row hf-clickable"
+              onClick={() => p.student_id && navigate(`/admin/fees?tab=history&student_id=${p.student_id}`)}
+              style={{
               display: 'grid', gridTemplateColumns: '34px 1fr 120px 90px 70px 70px',
               padding: '11px 18px', alignItems: 'center',
               borderBottom: i < recent.length - 1 ? `1px solid ${hf.borderS}` : 'none',
@@ -205,7 +211,7 @@ const HA1 = () => {
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <span style={{ ...hfText.num, fontSize: 13, fontWeight: 700, color: hf.accent }}>₹{d.outstanding}</span>
-                <Btn variant="outline" size="sm" style={{ padding: '4px 10px', height: 26, fontSize: 11.5 }} onClick={() => navigate('/admin/fees')}>Collect</Btn>
+                <Btn variant="outline" size="sm" style={{ padding: '4px 10px', height: 26, fontSize: 11.5 }} onClick={() => navigate(`/admin/fees?tab=collect&student_id=${d.student_id}`)}>Collect</Btn>
               </div>
             </div>
           ))}
@@ -715,6 +721,95 @@ const HA3 = () => {
   );
 };
 
+// Student-level fee ledger: that student's fees (paid + outstanding) with a
+// paid/outstanding summary. Each fee row expands to show its payment(s).
+const StudentFeeLedger = ({ studentId }) => {
+  const [fees, setFees] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expanded, setExpanded] = useState(null); // fee id whose payments are shown
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    Promise.all([
+      apiFetch(`/api/fees?student_id=${studentId}&limit=100`),
+      apiFetch(`/api/payments?student_id=${studentId}&limit=100`),
+    ])
+      .then(([feeRes, payRes]) => {
+        if (cancelled) return;
+        setFees(feeRes.data || []);
+        setPayments(payRes.data || []);
+      })
+      .catch((e) => { if (!cancelled) setError(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [studentId]);
+
+  // Non-authoritative UI sums for the header (per-row figures stay exact strings).
+  const totalPaid = payments
+    .filter((p) => p.status !== 'reversed')
+    .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+  const totalOutstanding = fees.reduce((sum, f) => sum + (Number(f.balance) || 0), 0);
+  const paymentsByFee = (feeId) => payments.filter((p) => p.fee_id === feeId);
+
+  return (
+    <Card padding={0}>
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ ...hfText.h2 }}>Fee history</div>
+          <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>
+            Paid <span style={{ ...hfText.num, fontWeight: 700, color: hf.good }}>₹{totalPaid.toLocaleString('en-IN')}</span>
+            {' · '}Outstanding <span style={{ ...hfText.num, fontWeight: 700, color: totalOutstanding > 0 ? hf.accent : hf.muted }}>₹{totalOutstanding.toLocaleString('en-IN')}</span>
+          </div>
+        </div>
+      </div>
+
+      {loading && <div style={{ padding: '30px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>}
+      {error && !loading && <div style={{ padding: '30px 18px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load: {error}</div>}
+      {!loading && !error && fees.length === 0 && (
+        <div style={{ padding: '30px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No fees recorded for this student.</div>
+      )}
+
+      {!loading && !error && fees.map((f, i) => {
+        const isOpen = expanded === f.id;
+        const feePayments = paymentsByFee(f.id);
+        return (
+          <div key={f.id} style={{ borderBottom: i < fees.length - 1 ? `1px solid ${hf.borderS}` : 'none' }}>
+            <div className="hf-row hf-clickable" onClick={() => setExpanded(isOpen ? null : f.id)} style={{
+              display: 'grid', gridTemplateColumns: '1fr 90px 90px 80px 22px', gap: 8,
+              padding: '11px 18px', alignItems: 'center',
+            }}>
+              <div style={{ ...hfText.small, fontWeight: 600 }}>{cap(f.fee_type)} · {monthName(f.month)}</div>
+              <div style={{ ...hfText.num, fontSize: 12 }}>₹{f.net_amount}</div>
+              <div><Pill tone={f.status === 'paid' ? 'good' : f.status === 'partial' ? 'warn' : 'accent'} dot={f.status !== 'paid'}>{cap(f.status)}</Pill></div>
+              <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700, color: Number(f.balance) > 0 ? hf.accent : hf.muted, textAlign: 'right' }}>₹{f.balance}</div>
+              <span style={{ color: hf.muted, display: 'inline-flex', justifyContent: 'center', transform: isOpen ? 'rotate(90deg)' : 'none' }}>{I.chev}</span>
+            </div>
+            {isOpen && (
+              <div style={{ padding: '4px 18px 12px', background: hf.surface2 }}>
+                {feePayments.length === 0 ? (
+                  <div style={{ ...hfText.small, color: hf.muted, padding: '8px 0' }}>No payments against this fee yet.</div>
+                ) : feePayments.map((p) => (
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', opacity: p.status === 'reversed' ? 0.55 : 1 }}>
+                    <span style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{p.amount}</span>
+                    <Pill tone="neutral">{cap(p.payment_mode)}</Pill>
+                    <span style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{p.receipt_no}{p.status === 'reversed' ? ' (reversed)' : ''}</span>
+                    <div style={{ flex: 1 }} />
+                    <span style={{ ...hfText.small, color: hf.muted }}>{p.paid_at ? new Date(p.paid_at).toLocaleDateString() : ''}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </Card>
+  );
+};
+
 // ─── A3 · Student detail ──────────────────────────────────────────────────
 const HA3Detail = () => {
   const { id } = useParams();              // student id from the URL
@@ -839,15 +934,7 @@ const HA3Detail = () => {
 
           {/* RIGHT: fee history */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {/* Fee history deferred to Fees phase — will use real balance calc */}
-            <Card padding={0}>
-              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}` }}>
-                <div style={{ ...hfText.h2 }}>Fee history</div>
-              </div>
-              <div style={{ padding: '40px 18px', textAlign: 'center' }}>
-                <div style={{ ...hfText.small, color: hf.muted }}>Fee history will appear here.</div>
-              </div>
-            </Card>
+            <StudentFeeLedger studentId={s.id} />
 
             <Card>
               <SectionHead title="Activity" subtitle="Last 30 days" />

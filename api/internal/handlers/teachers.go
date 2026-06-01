@@ -20,6 +20,87 @@ func NewTeachersHandler(db *gorm.DB) *TeachersHandler {
 	return &TeachersHandler{DB: db}
 }
 
+// teacherListItem enriches a Teacher with the class(es) they are class-teacher
+// of for the current academic year. The embedded Teacher flattens into the same
+// JSON object.
+type teacherListItem struct {
+	models.Teacher
+	ClassTeacherOf []string `json:"class_teacher_of"` // class labels e.g. ["5-A"]; empty if none
+	UserID         *uint    `json:"user_id"`          // linked login account, for password reset
+}
+
+// enrichTeachers attaches class_teacher_of (current-AY class labels) to a page
+// of teachers via one batched query (no N+1). Order is preserved.
+func (h *TeachersHandler) enrichTeachers(schoolID uint, teachers []models.Teacher) []teacherListItem {
+	items := make([]teacherListItem, len(teachers))
+	for i := range teachers {
+		items[i] = teacherListItem{Teacher: teachers[i], ClassTeacherOf: []string{}}
+	}
+	if len(teachers) == 0 {
+		return items
+	}
+
+	ids := make([]uint, len(teachers))
+	for i := range teachers {
+		ids[i] = teachers[i].ID
+	}
+
+	// Linked login account per teacher (for password reset).
+	type userRow struct {
+		ID        uint
+		TeacherID uint
+	}
+	var userRows []userRow
+	h.DB.Table("users").
+		Select("id, teacher_id").
+		Where("school_id = ? AND teacher_id IN ?", schoolID, ids).
+		Scan(&userRows)
+	userByTeacher := map[uint]uint{}
+	for _, u := range userRows {
+		userByTeacher[u.TeacherID] = u.ID
+	}
+	for i := range items {
+		if uid, ok := userByTeacher[items[i].ID]; ok {
+			id := uid
+			items[i].UserID = &id
+		}
+	}
+
+	// Resolve the current academic year (standard is_current lookup).
+	var currentAY models.AcademicYear
+	if h.DB.Where("school_id = ? AND is_current = ?", schoolID, true).First(&currentAY).Error != nil {
+		return items // no current AY → no class-teacher-of labels (user_id still set)
+	}
+
+	type tcRow struct {
+		ClassTeacherID uint
+		Name           string
+		Section        string
+	}
+	var rows []tcRow
+	h.DB.Table("class_years").
+		Select("class_years.class_teacher_id, classes.name, classes.section").
+		Joins("JOIN classes ON classes.id = class_years.class_id").
+		Where("class_years.school_id = ? AND class_years.academic_year_id = ? AND class_years.is_active = ? AND class_years.class_teacher_id IN ?",
+			schoolID, currentAY.ID, true, ids).
+		Scan(&rows)
+
+	labelsByTeacher := map[uint][]string{}
+	for _, r := range rows {
+		label := r.Name
+		if r.Section != "" {
+			label += "-" + r.Section
+		}
+		labelsByTeacher[r.ClassTeacherID] = append(labelsByTeacher[r.ClassTeacherID], label)
+	}
+	for i := range items {
+		if labels, ok := labelsByTeacher[items[i].ID]; ok {
+			items[i].ClassTeacherOf = labels
+		}
+	}
+	return items
+}
+
 // GET /api/teachers
 func (h *TeachersHandler) ListTeachers(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -34,7 +115,7 @@ func (h *TeachersHandler) ListTeachers(c *fiber.Ctx) error {
 	if err := query.Order("name asc").Find(&teachers).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch teachers"})
 	}
-	return c.JSON(teachers)
+	return c.JSON(h.enrichTeachers(schoolID, teachers))
 }
 
 // GET /api/teachers/:id
@@ -240,4 +321,44 @@ func (h *TeachersHandler) DeleteTeacher(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "teacher deactivated"})
+}
+
+// POST /api/teachers/:id/reactivate — flips a soft-deleted teacher (and their
+// linked user) back to active. Mirrors DeleteTeacher's structure.
+func (h *TeachersHandler) ReactivateTeacher(c *fiber.Ctx) error {
+	schoolID := middleware.GetSchoolID(c)
+
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid teacher id"})
+	}
+
+	err = h.DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&models.Teacher{}).
+			Where("id = ? AND school_id = ?", id, schoolID).
+			Update("is_active", true)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+
+		return tx.Model(&models.User{}).
+			Where("teacher_id = ? AND school_id = ?", id, schoolID).
+			Update("is_active", true).Error
+	})
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "teacher not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to reactivate"})
+	}
+
+	var teacher models.Teacher
+	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&teacher).Error; err != nil {
+		return c.JSON(fiber.Map{"ok": true})
+	}
+	return c.JSON(teacher)
 }

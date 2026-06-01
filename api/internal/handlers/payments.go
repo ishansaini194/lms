@@ -179,6 +179,63 @@ func (h *PaymentsHandler) Create(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusCreated).JSON(payment)
 }
 
+// paymentListItem enriches a Payment with human-readable context (student name,
+// fee type, month) for the Recent tab and student history. The embedded Payment
+// flattens into the same JSON object.
+type paymentListItem struct {
+	models.Payment
+	StudentName string `json:"student_name"`
+	StudentID   uint   `json:"student_id"`
+	FeeType     string `json:"fee_type"`
+	Month       int    `json:"month"`
+}
+
+// enrichPayments maps each payment's fee_id → {student, fee_type, month} via one
+// batched join (no N+1). Order is preserved.
+func (h *PaymentsHandler) enrichPayments(schoolID uint, payments []models.Payment) []paymentListItem {
+	items := make([]paymentListItem, len(payments))
+	for i := range payments {
+		items[i] = paymentListItem{Payment: payments[i]}
+	}
+	if len(payments) == 0 {
+		return items
+	}
+
+	feeIDs := make([]uint, len(payments))
+	for i := range payments {
+		feeIDs[i] = payments[i].FeeID
+	}
+
+	type feeRow struct {
+		FeeID       uint
+		FeeType     string
+		Month       int
+		StudentID   uint
+		StudentName string
+	}
+	var rows []feeRow
+	h.DB.Table("fees").
+		Select("fees.id as fee_id, fees.fee_type, fees.month, students.id as student_id, students.name as student_name").
+		Joins("JOIN enrollments ON enrollments.id = fees.enrollment_id").
+		Joins("JOIN students ON students.id = enrollments.student_id").
+		Where("fees.school_id = ? AND fees.id IN ?", schoolID, feeIDs).
+		Scan(&rows)
+
+	byFee := map[uint]feeRow{}
+	for _, r := range rows {
+		byFee[r.FeeID] = r
+	}
+	for i := range items {
+		if r, ok := byFee[items[i].FeeID]; ok {
+			items[i].StudentName = r.StudentName
+			items[i].StudentID = r.StudentID
+			items[i].FeeType = r.FeeType
+			items[i].Month = r.Month
+		}
+	}
+	return items
+}
+
 // GET /api/payments?fee_id=&student_id=&from=&to=  (paginated)
 func (h *PaymentsHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -234,7 +291,7 @@ func (h *PaymentsHandler) List(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"data": payments, "total": total, "page": page, "limit": limit, "total_pages": totalPages,
+		"data": h.enrichPayments(schoolID, payments), "total": total, "page": page, "limit": limit, "total_pages": totalPages,
 	})
 }
 

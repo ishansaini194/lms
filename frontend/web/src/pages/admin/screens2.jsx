@@ -1,17 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '@/lib/api';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame,
+  ModalShell, StateFrame, SearchInput, FilterSelect,
 } from '@/components/ui/primitives';
 import {
-  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox, Dropdown,
+  AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Searchbox,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
 import { TeacherFormModal, HA6Modal, ConfirmModal } from '@/pages/admin/extras.jsx';
+import { useAuth } from '@/auth/AuthContext';
 // Admin hi-fi · A4 Fees (Collect flow) · A5 Teachers · A6 Notices
 
 // ── Module-level helpers (kept out of the component to avoid focus loss) ──
@@ -38,9 +39,14 @@ const StepHead = ({ n, title, right }) => (
   </div>
 );
 
-// ─── A4 · Fees — Collect flow ─────────────────────────────────────────────
+// Maps lowercase URL ?tab= values to the capitalized Tab ids.
+const FEE_TAB_IDS = { collect: 'Collect', pending: 'Pending', recent: 'Recent', history: 'History' };
+
+// ─── A4 · Fees — Collect flow + Pending / Recent / History tabs ───────────
 const HA4 = () => {
-  const [tab, setTab] = useState('Collect');
+  const [searchParams] = useSearchParams();
+  const [tab, setTab] = useState(() => FEE_TAB_IDS[(searchParams.get('tab') || '').toLowerCase()] || 'Collect');
+  const [historyStudentId, setHistoryStudentId] = useState(null); // preload for History tab
 
   // Step 1 — find student
   const [query, setQuery] = useState('');
@@ -129,6 +135,39 @@ const HA4 = () => {
     if (selectedStudent) loadFees(selectedStudent.id);
   };
 
+  // Preload a student into the Collect flow (used by ?student_id= and the
+  // Pending tab's "Collect" action), then switch to the Collect tab.
+  const preloadStudent = (studentId) => {
+    apiFetch(`/api/students/${studentId}`)
+      .then((s) => {
+        setReceipt(null);
+        setSelectedStudent({ id: s.id, name: s.name });
+        setSelectedFee(null);
+        setFees([]);
+        loadFees(s.id);
+        setTab('Collect');
+      })
+      .catch(() => {});
+  };
+
+  // Open the History tab focused on a given student (Recent row → History).
+  const viewHistory = (studentId) => {
+    setHistoryStudentId(studentId);
+    setTab('History');
+  };
+
+  // On mount, honour ?student_id= — into History if ?tab=history, else Collect.
+  useEffect(() => {
+    const sid = searchParams.get('student_id');
+    if (!sid) return;
+    if ((searchParams.get('tab') || '').toLowerCase() === 'history') {
+      setHistoryStudentId(Number(sid));
+    } else {
+      preloadStudent(Number(sid));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
     <AdminChrome
       active="Fees"
@@ -145,6 +184,11 @@ const HA4 = () => {
         { label: 'History', id: 'History' },
       ]} active={tab} onChange={setTab} />
 
+      {tab === 'Pending' && <PendingFeesTab onCollect={preloadStudent} />}
+      {tab === 'Recent' && <RecentPaymentsTab onViewHistory={viewHistory} />}
+      {tab === 'History' && <PaymentHistoryTab studentId={historyStudentId} />}
+
+      {tab === 'Collect' && (
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.05fr', gap: 14, alignItems: 'start' }}>
         {/* LEFT — find student + outstanding fees */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -336,12 +380,398 @@ const HA4 = () => {
           )}
         </Card>
       </div>
+      )}
     </AdminChrome>
   );
 };
 
+// ── Shared pager for the Fees tabs ──
+const TabPager = ({ page, totalPages, onPage }) => (
+  <div style={{
+    padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  }}>
+    <span style={{ ...hfText.small, color: hf.muted }}>Page {page} of {totalPages || 1}</span>
+    <div style={{ display: 'flex', gap: 6 }}>
+      <Btn variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(Math.max(1, page - 1))}>‹ Prev</Btn>
+      <Btn variant="outline" size="sm" disabled={page >= (totalPages || 1)} onClick={() => onPage(page + 1)}>Next ›</Btn>
+    </div>
+  </div>
+);
+
+// Payment mode → pill tone.
+const modePill = (m) => <Pill tone="neutral">{cap(m || '')}</Pill>;
+const feeStatusTone = (s) => (s === 'paid' ? 'good' : s === 'partial' ? 'warn' : 'accent');
+
+// ─── A4 · Pending tab — fee-level worklist (status=pending = unpaid+partial) ──
+const PendingFeesTab = ({ onCollect }) => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [classFilter, setClassFilter] = useState('');
+  const [classOptions, setClassOptions] = useState([{ value: '', label: 'All classes' }]);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({ status: 'pending', page: String(page), limit: '20' });
+    if (classFilter) params.set('class_year_id', String(classFilter));
+    apiFetch(`/api/fees?${params.toString()}`)
+      .then((res) => {
+        setRows(res.data || []);
+        setTotal(res.total || 0);
+        setTotalPages(res.total_pages || 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [page, classFilter]);
+
+  useEffect(() => {
+    apiFetch('/api/class-years')
+      .then((data) => {
+        const arr = Array.isArray(data) ? data : [];
+        const cur = arr.filter((cy) => cy.academic_year?.is_current);
+        const list = cur.length ? cur : arr;
+        setClassOptions([{ value: '', label: 'All classes' },
+          ...list.map((cy) => ({ value: cy.id, label: cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}` }))]);
+      })
+      .catch(() => {});
+  }, []);
+
+  return (
+    <Card padding={0}>
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div>
+          <div style={{ ...hfText.h2 }}>Pending fees</div>
+          <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>{loading ? 'Loading…' : `${total} unpaid or partial`}</div>
+        </div>
+        <div style={{ flex: 1 }} />
+        <FilterSelect label="Class" value={classFilter} onChange={(v) => { setClassFilter(v); setPage(1); }} options={classOptions} width={200} />
+      </div>
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1.4fr 80px 1fr 70px 100px 90px 90px',
+        padding: '10px 18px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+        ...hfText.micro, fontSize: 10,
+      }}>
+        <div>Student</div><div>Class</div><div>Fee type</div><div>Month</div><div>Net</div><div>Status</div><div style={{ textAlign: 'right' }} />
+      </div>
+      {loading && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>}
+      {error && !loading && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load: {error}</div>}
+      {!loading && !error && rows.length === 0 && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.good }}>No pending fees.</div>}
+      {!loading && !error && rows.map((r, i) => (
+        <div key={r.id} style={{
+          display: 'grid', gridTemplateColumns: '1.4fr 80px 1fr 70px 100px 90px 90px',
+          padding: '11px 18px', alignItems: 'center',
+          borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
+        }}>
+          <div style={{ ...hfText.small, fontWeight: 600 }}>{r.student_name || '—'}</div>
+          <div style={{ ...hfText.small, color: hf.muted }}>{r.class_label || '—'}</div>
+          <div style={{ ...hfText.small }}>{cap(r.fee_type)}</div>
+          <div style={{ ...hfText.small, color: hf.muted }}>{monthName(r.month)}</div>
+          <div style={{ ...hfText.num, fontSize: 12, fontWeight: 600 }}>₹{r.net_amount}</div>
+          <div><Pill tone={feeStatusTone(r.status)} dot={r.status !== 'paid'}>{cap(r.status)}</Pill></div>
+          <div style={{ textAlign: 'right' }}>
+            <Btn variant="soft" size="sm" onClick={() => onCollect?.(r.student_id)}>Collect</Btn>
+          </div>
+        </div>
+      ))}
+      {!loading && !error && rows.length > 0 && <TabPager page={page} totalPages={totalPages} onPage={setPage} />}
+    </Card>
+  );
+};
+
+// ─── A4 · Recent tab — newest payments across the school ──────────────────
+const RecentPaymentsTab = ({ onViewHistory }) => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const { printReceipt, printNode } = useReceiptPrinter();
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    apiFetch(`/api/payments?page=${page}&limit=20`)
+      .then((res) => {
+        setRows(res.data || []);
+        setTotal(res.total || 0);
+        setTotalPages(res.total_pages || 1);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [page]);
+
+  return (
+    <Card padding={0}>
+      {printNode}
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}` }}>
+        <div style={{ ...hfText.h2 }}>Recent payments</div>
+        <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>{loading ? 'Loading…' : `${total} payments`}</div>
+      </div>
+      <div style={{
+        display: 'grid', gridTemplateColumns: '1.3fr 1.2fr 90px 80px 1fr 110px 34px',
+        padding: '10px 18px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+        ...hfText.micro, fontSize: 10,
+      }}>
+        <div>Student</div><div>For</div><div>Amount</div><div>Mode</div><div>Receipt</div><div style={{ textAlign: 'right' }}>Paid at</div><div />
+      </div>
+      {loading && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>}
+      {error && !loading && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load: {error}</div>}
+      {!loading && !error && rows.length === 0 && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No payments yet.</div>}
+      {!loading && !error && rows.map((r, i) => (
+        <div key={r.id} className="hf-row hf-clickable" onClick={() => onViewHistory?.(r.student_id)} style={{
+          display: 'grid', gridTemplateColumns: '1.3fr 1.2fr 90px 80px 1fr 110px 34px',
+          padding: '11px 18px', alignItems: 'center',
+          borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
+          opacity: r.status === 'reversed' ? 0.55 : 1,
+        }}>
+          <div style={{ ...hfText.small, fontWeight: 600 }}>{r.student_name || '—'}</div>
+          <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(r.fee_type)} · {monthName(r.month)}</div>
+          <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{r.amount}</div>
+          <div>{modePill(r.payment_mode)}</div>
+          <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{r.receipt_no}{r.status === 'reversed' ? ' (reversed)' : ''}</div>
+          <div style={{ textAlign: 'right', ...hfText.small, color: hf.muted }}>{r.paid_at ? new Date(r.paid_at).toLocaleString() : '—'}</div>
+          <div style={{ textAlign: 'right' }}>
+            <button onClick={(e) => { e.stopPropagation(); printReceipt(r); }} className="hf-btn" title="Print receipt" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.receipt}</button>
+          </div>
+        </div>
+      ))}
+      {!loading && !error && rows.length > 0 && <TabPager page={page} totalPages={totalPages} onPage={setPage} />}
+    </Card>
+  );
+};
+
+// ─── A4 · History tab — a single student's full payment ledger ────────────
+const PaymentHistoryTab = ({ studentId }) => {
+  const [query, setQuery] = useState('');
+  const [matches, setMatches] = useState([]);
+  const [searching, setSearching] = useState(false);
+  const [student, setStudent] = useState(null);
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const { printReceipt, printNode } = useReceiptPrinter();
+
+  // Debounced student search.
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) { setMatches([]); setSearching(false); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      apiFetch(`/api/students?search=${encodeURIComponent(q)}`)
+        .then((res) => setMatches(res.data || []))
+        .catch(() => setMatches([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Preload a student passed in from a Recent row / dashboard.
+  useEffect(() => {
+    if (!studentId) return;
+    apiFetch(`/api/students/${studentId}`).then((s) => setStudent(s)).catch(() => {});
+  }, [studentId]);
+
+  // Load the selected student's payments.
+  useEffect(() => {
+    if (!student) { setRows([]); return; }
+    setLoading(true);
+    apiFetch(`/api/payments?student_id=${student.id}&page=${page}&limit=20`)
+      .then((res) => { setRows(res.data || []); setTotalPages(res.total_pages || 1); })
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [student, page]);
+
+  const selectStudent = (s) => { setStudent(s); setPage(1); setQuery(''); setMatches([]); };
+
+  return (
+    <Card padding={0}>
+      {printNode}
+      <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}` }}>
+        <div style={{ ...hfText.h2, marginBottom: 10 }}>Payment history</div>
+        <SearchInput value={query} onChange={setQuery} placeholder="Find a student by name, admission no.…" width="100%" />
+        {searching && <div style={{ ...hfText.small, color: hf.muted, marginTop: 8 }}>Searching…</div>}
+        {matches.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+            {matches.map((m) => (
+              <div key={m.id} onClick={() => selectStudent(m)} className="hf-row hf-clickable" style={{
+                padding: '9px 12px', borderRadius: 9, border: `1px solid ${hf.border}`, background: hf.surface,
+                display: 'grid', gridTemplateColumns: '28px 1fr', gap: 10, alignItems: 'center', cursor: 'pointer',
+              }}>
+                <Avatar name={m.name} size={26} />
+                <div>
+                  <div style={{ ...hfText.small, fontWeight: 600 }}>{m.name}</div>
+                  <div style={{ fontSize: 11, color: hf.muted, ...hfText.num }}>{m.admission_no}{m.class_label ? ` · ${m.class_label}` : ''}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {student && (
+        <>
+          <div style={{ padding: '12px 18px', display: 'flex', alignItems: 'center', gap: 12, background: hf.surface2, borderBottom: `1px solid ${hf.borderS}` }}>
+            <Avatar name={student.name} size={32} />
+            <div>
+              <div style={{ ...hfText.small, fontWeight: 700 }}>{student.name}</div>
+              <div style={{ fontSize: 11, color: hf.muted }}>{student.admission_no}{student.class_label ? ` · ${student.class_label}` : ''}</div>
+            </div>
+          </div>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1.2fr 90px 80px 1fr 110px 34px',
+            padding: '10px 18px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+            ...hfText.micro, fontSize: 10,
+          }}>
+            <div>For</div><div>Amount</div><div>Mode</div><div>Receipt</div><div style={{ textAlign: 'right' }}>Paid at</div><div />
+          </div>
+          {loading && <div style={{ padding: '30px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>}
+          {!loading && rows.length === 0 && <div style={{ padding: '30px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No payments recorded for this student.</div>}
+          {!loading && rows.map((r, i) => (
+            <div key={r.id} style={{
+              display: 'grid', gridTemplateColumns: '1.2fr 90px 80px 1fr 110px 34px',
+              padding: '11px 18px', alignItems: 'center',
+              borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
+              opacity: r.status === 'reversed' ? 0.55 : 1,
+            }}>
+              <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(r.fee_type)} · {monthName(r.month)}</div>
+              <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{r.amount}</div>
+              <div>{modePill(r.payment_mode)}</div>
+              <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{r.receipt_no}{r.status === 'reversed' ? ' (reversed)' : ''}</div>
+              <div style={{ textAlign: 'right', ...hfText.small, color: hf.muted }}>{r.paid_at ? new Date(r.paid_at).toLocaleString() : '—'}</div>
+              <div style={{ textAlign: 'right' }}>
+                <button onClick={(e) => { e.stopPropagation(); printReceipt({ ...r, student_id: student?.id, student_name: student?.name }); }} className="hf-btn" title="Print receipt" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.receipt}</button>
+              </div>
+            </div>
+          ))}
+          {!loading && rows.length > 0 && <TabPager page={page} totalPages={totalPages} onPage={setPage} />}
+        </>
+      )}
+    </Card>
+  );
+};
+
+// ── 80mm thermal fee receipt (print-only) ──
+// label-left / value-right line, monospace value.
+const RLine = ({ label, value, strong }) => (
+  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+    <span>{label}</span>
+    <span style={{ fontWeight: strong ? 700 : 400, fontFamily: hfFonts.mono, textAlign: 'right' }}>{value}</span>
+  </div>
+);
+
+// Renders the thermal receipt. Hidden on screen; the @media print block in
+// tokens.css makes it the only visible element when printing. All money is
+// shown as the exact decimal strings; Number() is used only for >0 comparisons.
+const ThermalReceipt = ({ school, payment, student, fee }) => {
+  if (!payment) return null;
+  const paidAt = payment.paid_at ? new Date(payment.paid_at).toLocaleString('en-IN') : '';
+  const hasDiscount = fee && Number(fee.discount) > 0;
+  const balanceDue = fee && Number(fee.balance) > 0;
+  return (
+    <div className="thermal-receipt">
+      {/* Letterhead (no logo on thermal) */}
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontWeight: 700, fontSize: 14 }}>{school?.name || 'School'}</div>
+        {school?.address && <div style={{ fontSize: 10 }}>{school.address}</div>}
+        {school?.phone && <div style={{ fontSize: 10 }}>Ph: {school.phone}</div>}
+      </div>
+      <div className="rule" />
+      <div style={{ textAlign: 'center', fontWeight: 700, letterSpacing: '0.08em' }}>FEE RECEIPT</div>
+      <div style={{ marginTop: 4 }}>
+        <RLine label="Receipt" value={payment.receipt_no} />
+        <RLine label="Date" value={paidAt} />
+      </div>
+      <div className="rule" />
+      {/* Student */}
+      <div>
+        <RLine label="Student" value={student?.name || '—'} />
+        {student?.class_label && <RLine label="Class" value={student.class_label} />}
+        {student?.admission_no && <RLine label="Adm. No" value={student.admission_no} />}
+      </div>
+      <div className="rule" />
+      {/* Fee detail */}
+      <div>
+        <RLine label={`${cap(fee?.fee_type || '')} · ${monthName(fee?.month)}`} value={`₹${fee?.amount ?? '—'}`} />
+        {hasDiscount && <RLine label="Discount" value={`-₹${fee.discount}`} />}
+        {hasDiscount && <RLine label="Net" value={`₹${fee.net_amount}`} />}
+      </div>
+      <div className="rule" />
+      {/* Payment */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', fontWeight: 700 }}>
+        <span style={{ fontSize: 12 }}>AMOUNT PAID</span>
+        <span style={{ fontFamily: hfFonts.mono, fontSize: 15 }}>₹{payment.amount}</span>
+      </div>
+      <div style={{ marginTop: 4 }}>
+        <RLine label="Mode" value={cap(payment.payment_mode)} />
+        {payment.txn_ref && <RLine label="Txn Ref" value={payment.txn_ref} />}
+        {fee && <RLine label={balanceDue ? 'Balance due' : 'Balance'} value={`₹${fee.balance}`} strong={balanceDue} />}
+      </div>
+      <div className="rule" />
+      {/* Footer */}
+      <div style={{ textAlign: 'center', fontSize: 10 }}>
+        <div>Thank you</div>
+        <div>This is a computer-generated receipt.</div>
+      </div>
+      <div style={{ marginTop: 24 }}>
+        <div style={{ borderTop: '1px solid #000', width: '60%', marginLeft: 'auto' }} />
+        <div style={{ textAlign: 'right', fontSize: 10, marginTop: 2 }}>Authorized signature</div>
+      </div>
+    </div>
+  );
+};
+
+// Shared reprint helper for the Recent/History tabs. Fetches the fee (for
+// net/discount/balance) and student (for class/adm-no) the row doesn't carry,
+// renders a single hidden receipt node, and triggers the print dialog.
+function useReceiptPrinter() {
+  const { school } = useAuth();
+  const [data, setData] = useState(null); // { payment, student, fee }
+
+  const printReceipt = async (payment) => {
+    let fee = null, student = { name: payment.student_name };
+    try {
+      const [f, s] = await Promise.all([
+        apiFetch(`/api/fees/${payment.fee_id}`),
+        apiFetch(`/api/students/${payment.student_id}`),
+      ]);
+      fee = f; student = s;
+    } catch { /* fall back to row data */ }
+    // New object each call so a repeat print of the same row re-triggers.
+    setData({ payment, student, fee });
+  };
+
+  // Print once the hidden node has rendered.
+  useEffect(() => {
+    if (!data) return;
+    const t = setTimeout(() => window.print(), 60);
+    return () => clearTimeout(t);
+  }, [data]);
+
+  const printNode = data ? (
+    <div className="print-only">
+      <ThermalReceipt school={school} payment={data.payment} student={data.student} fee={data.fee} />
+    </div>
+  ) : null;
+
+  return { printReceipt, printNode };
+}
+
 // ── Receipt success panel (shown after a payment is recorded) ──
 const ReceiptPanel = ({ receipt, student, fee, onAnother }) => {
+  const { school } = useAuth();
+  // Per-fee balance AFTER this payment. The create response returns only the
+  // payment (no updated balance), so compute it from the pre-payment fee:
+  // new balance = pre-payment balance − this payment. Display-only string math.
+  const receiptFee = fee
+    ? { ...fee, balance: (Number(fee.balance) - Number(receipt.amount)).toFixed(2) }
+    : null;
   const RowLine = ({ label, value, strong }) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '11px 0', borderBottom: `1px solid ${hf.borderS}` }}>
       <span style={{ ...hfText.small, color: hf.muted }}>{label}</span>
@@ -350,6 +780,11 @@ const ReceiptPanel = ({ receipt, student, fee, onAnother }) => {
   );
   return (
     <>
+      {/* Print-only thermal receipt (hidden on screen). */}
+      <div className="print-only">
+        <ThermalReceipt school={school} payment={receipt} student={student} fee={receiptFee} />
+      </div>
+
       <div style={{ padding: '16px 20px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', gap: 10 }}>
         <span style={{
           width: 26, height: 26, borderRadius: '50%', background: hf.good, color: '#fff',
@@ -397,14 +832,34 @@ const HA5 = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  // Filters (all client-side — the list is small and unpaginated).
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('active'); // 'active' | 'inactive'
+
+  // Reset-password flow.
+  const [resetting, setResetting] = useState(null);  // teacher being reset
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState('');
+  const [resetResult, setResetResult] = useState(null); // { name, password? } after success
+
+  // Fetch the full set once (active + inactive) so counts are honest and
+  // switching tabs needs no refetch.
   const loadTeachers = () => {
     setLoading(true);
-    apiFetch('/api/teachers')
+    apiFetch('/api/teachers?include_inactive=true')
       .then((data) => setTeachers(Array.isArray(data) ? data : []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
   useEffect(() => { loadTeachers(); }, []);
+
+  // Debounce the search box (client-side filter, just for smooth typing).
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
 
   const confirmDelete = async () => {
     if (!deleting) return;
@@ -421,9 +876,56 @@ const HA5 = () => {
     }
   };
 
+  const reactivate = async (id) => {
+    setError(null);
+    try {
+      await apiFetch(`/api/teachers/${id}/reactivate`, { method: 'POST' });
+      loadTeachers();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const confirmReset = async () => {
+    if (!resetting) return;
+    if (!resetting.user_id) { setResetErr('No login account linked to this teacher.'); return; }
+    setResetBusy(true);
+    setResetErr('');
+    try {
+      // Empty body → backend resets to the default password and echoes it.
+      const res = await apiFetch(`/api/auth/reset-password/${resetting.user_id}`, { method: 'POST', body: {} });
+      setResetResult({ name: resetting.name, password: res.password || null });
+      setResetting(null);
+    } catch (e) {
+      setResetErr(e.message);
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
   const total = teachers.length;
   const activeCount = teachers.filter((t) => t.is_active).length;
   const inactiveCount = total - activeCount;
+
+  // Distinct subjects present, for the Subject filter.
+  const subjectOptions = [
+    { value: '', label: 'All' },
+    ...Array.from(new Set(teachers.map((t) => t.subject).filter(Boolean)))
+      .sort()
+      .map((s) => ({ value: s, label: s })),
+  ];
+
+  const q = debouncedSearch.trim().toLowerCase();
+  const filtered = teachers.filter((t) => {
+    if (statusFilter === 'active' && !t.is_active) return false;
+    if (statusFilter === 'inactive' && t.is_active) return false;
+    if (subjectFilter && t.subject !== subjectFilter) return false;
+    if (q) {
+      const hay = `${t.name || ''} ${t.subject || ''} ${t.employee_id || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 
   return (
     <>
@@ -440,11 +942,16 @@ const HA5 = () => {
           {loading ? 'Loading…' : `${total} teachers · ${activeCount} active · ${inactiveCount} inactive`}
         </div>
 
-        <Card padding={14} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{ flex: 1, minWidth: 240 }}><Searchbox placeholder="Search name, subject, emp. ID…" width={'100%'} /></div>
-          <Dropdown label="Subject" value="All" width={150} />
-          <Dropdown label="Status" value="All" width={130} />
-          <Btn variant="ghost" size="sm" icon={I.filter}>More filters</Btn>
+        <Card padding={14} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search name, subject, emp. ID…" width={'100%'} />
+          </div>
+          <FilterSelect label="Subject" value={subjectFilter} onChange={setSubjectFilter} options={subjectOptions} width={170} />
+          <Segmented
+            items={['Active', 'Inactive']}
+            active={statusFilter === 'inactive' ? 'Inactive' : 'Active'}
+            onChange={(v) => setStatusFilter(v.toLowerCase())}
+          />
         </Card>
 
         <Card padding={0}>
@@ -466,12 +973,15 @@ const HA5 = () => {
           {!loading && !error && teachers.length === 0 && (
             <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No teachers yet.</div>
           )}
+          {!loading && !error && teachers.length > 0 && filtered.length === 0 && (
+            <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No {statusFilter} teachers match your filters.</div>
+          )}
 
-          {!loading && !error && teachers.map((t, i) => (
+          {!loading && !error && filtered.map((t, i) => (
             <div key={t.id ?? i} className="hf-row" style={{
               display: 'grid', gridTemplateColumns: '36px 1.4fr 130px 130px 110px 130px 100px 130px',
               padding: '11px 20px', alignItems: 'center',
-              borderBottom: i < teachers.length - 1 ? `1px solid ${hf.borderS}` : 'none',
+              borderBottom: i < filtered.length - 1 ? `1px solid ${hf.borderS}` : 'none',
               opacity: t.is_active ? 1 : 0.62,
             }}>
               <Avatar name={t.name} size={28} />
@@ -480,9 +990,13 @@ const HA5 = () => {
                 <div style={{ fontSize: 11, color: hf.muted }}>{t.qualification || '—'}</div>
               </div>
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.ink2 }}>{t.phone}</div>
-              <div><Pill tone="neutral">{t.subject}</Pill></div>
+              <div>{t.subject ? <Pill tone="neutral">{t.subject}</Pill> : <span style={{ ...hfText.small, color: hf.faint }}>—</span>}</div>
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.muted }}>{t.employee_id}</div>
-              <div><span style={{ ...hfText.small, color: hf.faint }}>—</span></div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {t.class_teacher_of && t.class_teacher_of.length > 0
+                  ? t.class_teacher_of.map((label) => <Pill key={label} tone="primary">{label}</Pill>)
+                  : <span style={{ ...hfText.small, color: hf.faint }}>—</span>}
+              </div>
               <div>
                 {t.is_active
                   ? <Pill tone="good" dot>Active</Pill>
@@ -490,18 +1004,20 @@ const HA5 = () => {
               </div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                 <button onClick={() => setEditing(t)} className="hf-btn" title="Edit" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
-                <button className="hf-btn" title="Reset password" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
-                {t.is_active && (
+                <button onClick={() => { setResetErr(''); setResetting(t); }} className="hf-btn" title="Reset password" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
+                {t.is_active ? (
                   <button onClick={() => { setDelErr(''); setDeleting(t); }} className="hf-btn" title="Deactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                   </button>
+                ) : (
+                  <button onClick={() => reactivate(t.id)} className="hf-btn" title="Reactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.good, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.refresh}</button>
                 )}
               </div>
             </div>
           ))}
 
           <div style={{ padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, ...hfText.small, color: hf.muted }}>
-            Adding a teacher auto-creates a User account · default password is their phone number · they'll change it on first login.
+            Adding a teacher auto-creates a User account · default password is 123456 · they'll change it on first login.
           </div>
         </Card>
       </AdminChrome>
@@ -526,6 +1042,44 @@ const HA5 = () => {
             busy={delBusy}
             error={delErr}
           />
+        </div>
+      )}
+      {resetting && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ConfirmModal
+            title="Reset password?"
+            message={`Reset the password for ${resetting.name}? They'll get the default password and must change it on first login.`}
+            confirmLabel="Reset password"
+            danger={false}
+            onConfirm={confirmReset}
+            onCancel={() => setResetting(null)}
+            busy={resetBusy}
+            error={resetErr}
+          />
+        </div>
+      )}
+      {resetResult && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <div onClick={() => setResetResult(null)} style={{ position: 'absolute', inset: 0 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+              <ModalShell
+                title="Password reset"
+                width={420}
+                footer={<Btn variant="primary" size="md" onClick={() => setResetResult(null)}>Done</Btn>}
+              >
+                <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+                  {resetResult.name}'s password has been reset.
+                </div>
+                {resetResult.password && (
+                  <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, background: hf.surface2, border: `1px solid ${hf.borderS}` }}>
+                    <div style={{ ...hfText.micro, fontSize: 10 }}>New password</div>
+                    <div style={{ ...hfText.num, fontSize: 20, fontWeight: 700, marginTop: 4 }}>{resetResult.password}</div>
+                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 6 }}>Share this with the teacher · they'll be asked to change it on first login.</div>
+                  </div>
+                )}
+              </ModalShell>
+            </div>
+          </div>
         </div>
       )}
     </>

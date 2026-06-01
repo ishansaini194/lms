@@ -28,6 +28,7 @@ type recentPaymentStat struct {
 	Amount      decimal.Decimal `json:"amount"`
 	PaymentMode string          `json:"payment_mode"`
 	PaidAt      time.Time       `json:"paid_at"`
+	StudentID   uint            `json:"student_id"`
 	StudentName string          `json:"student_name"`
 	FeeType     string          `json:"fee_type"`
 	Month       int             `json:"month"`
@@ -101,7 +102,7 @@ func (h *DashboardHandler) Stats(c *fiber.Ctx) error {
 	recentPayments := []recentPaymentStat{}
 	h.DB.Table("payments").
 		Select("payments.receipt_no, payments.amount, payments.payment_mode, payments.paid_at, "+
-			"students.name AS student_name, fees.fee_type, fees.month").
+			"students.id AS student_id, students.name AS student_name, fees.fee_type, fees.month").
 		Joins("JOIN fees ON fees.id = payments.fee_id").
 		Joins("JOIN enrollments ON enrollments.id = fees.enrollment_id").
 		Joins("JOIN students ON students.id = enrollments.student_id").

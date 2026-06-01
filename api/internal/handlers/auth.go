@@ -65,9 +65,12 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 			"display_name": user.DisplayName,
 		},
 		"school": fiber.Map{
-			"id":   school.ID,
-			"name": school.Name,
-			"code": school.Code,
+			"id":      school.ID,
+			"name":    school.Name,
+			"code":    school.Code,
+			"address": school.Address,
+			"phone":   school.Phone,
+			"email":   school.Email,
 		},
 	})
 }
@@ -126,11 +129,17 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	var body struct {
 		NewPassword string `json:"new_password"`
 	}
-	if err := c.BodyParser(&body); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
-	}
+	// Empty/absent body is allowed: it means "reset to the default password".
+	_ = c.BodyParser(&body)
 
-	if len(body.NewPassword) < 8 {
+	// If the admin supplied an explicit password, enforce the length rule.
+	// Otherwise reset to the shared default (same as on account creation) and
+	// echo it back so the admin can pass it on.
+	newPassword := body.NewPassword
+	resetToDefault := newPassword == ""
+	if resetToDefault {
+		newPassword = auth.DefaultPassword
+	} else if len(newPassword) < 8 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "password must be at least 8 characters"})
 	}
 
@@ -139,12 +148,16 @@ func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
 	}
 
-	hash, err := auth.HashPassword(body.NewPassword)
+	hash, err := auth.HashPassword(newPassword)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to hash password"})
 	}
 
 	h.DB.Model(&user).Update("password_hash", hash)
 
-	return c.JSON(fiber.Map{"message": "password reset"})
+	resp := fiber.Map{"message": "password reset"}
+	if resetToDefault {
+		resp["password"] = auth.DefaultPassword
+	}
+	return c.JSON(resp)
 }

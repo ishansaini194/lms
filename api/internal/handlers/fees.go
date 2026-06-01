@@ -110,7 +110,11 @@ func (h *FeesHandler) List(c *fiber.Ctx) error {
 	if month > 0 {
 		query = query.Where("fees.month = ?", month)
 	}
-	if status != "" {
+	// status=pending is a convenience alias for "not fully paid" (unpaid + partial),
+	// so the Pending worklist can be fetched in a single call.
+	if status == "pending" {
+		query = query.Where("fees.status != ?", "paid")
+	} else if status != "" {
 		query = query.Where("fees.status = ?", status)
 	}
 	if overdue {
@@ -190,12 +194,72 @@ func (h *FeesHandler) List(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"data":        fees,
+		"data":        h.enrichFees(schoolID, fees),
 		"total":       total,
 		"page":        page,
 		"limit":       limit,
 		"total_pages": totalPages,
 	})
+}
+
+// feeListItem enriches a Fee with student name and class label so the Pending
+// worklist is readable. The embedded Fee (incl. computed net/paid/balance)
+// flattens into the same JSON object.
+type feeListItem struct {
+	models.Fee
+	StudentName string `json:"student_name"`
+	StudentID   uint   `json:"student_id"`
+	ClassLabel  string `json:"class_label"`
+}
+
+// enrichFees maps each fee's enrollment → {student, class label} via one batched
+// join (no N+1). Order is preserved. Mirrors the payments/students enrichment.
+func (h *FeesHandler) enrichFees(schoolID uint, fees []models.Fee) []feeListItem {
+	items := make([]feeListItem, len(fees))
+	for i := range fees {
+		items[i] = feeListItem{Fee: fees[i]}
+	}
+	if len(fees) == 0 {
+		return items
+	}
+
+	enrIDs := make([]uint, len(fees))
+	for i := range fees {
+		enrIDs[i] = fees[i].EnrollmentID
+	}
+
+	type enrRow struct {
+		EnrollmentID uint
+		StudentID    uint
+		StudentName  string
+		ClassName    string
+		Section      string
+	}
+	var rows []enrRow
+	h.DB.Table("enrollments").
+		Select("enrollments.id as enrollment_id, students.id as student_id, students.name as student_name, classes.name as class_name, classes.section").
+		Joins("JOIN students ON students.id = enrollments.student_id").
+		Joins("JOIN class_years ON class_years.id = enrollments.class_year_id").
+		Joins("JOIN classes ON classes.id = class_years.class_id").
+		Where("enrollments.school_id = ? AND enrollments.id IN ?", schoolID, enrIDs).
+		Scan(&rows)
+
+	byEnr := map[uint]enrRow{}
+	for _, r := range rows {
+		byEnr[r.EnrollmentID] = r
+	}
+	for i := range items {
+		if r, ok := byEnr[items[i].EnrollmentID]; ok {
+			items[i].StudentID = r.StudentID
+			items[i].StudentName = r.StudentName
+			label := r.ClassName
+			if r.Section != "" {
+				label += "-" + r.Section
+			}
+			items[i].ClassLabel = label
+		}
+	}
+	return items
 }
 
 // GET /api/fees/:id — single fee with payment history

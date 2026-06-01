@@ -64,6 +64,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	teachers.Post("/", teacherHandler.CreateTeacher)
 	teachers.Put("/:id", teacherHandler.UpdateTeacher)
 	teachers.Delete("/:id", teacherHandler.DeleteTeacher)
+	teachers.Post("/:id/reactivate", teacherHandler.ReactivateTeacher)
 
 	// Students
 	studentsHandler := handlers.NewStudentsHandler(db)
@@ -75,6 +76,12 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	students.Put("/:id", studentsHandler.UpdateStudent)
 	students.Delete("/:id", studentsHandler.DeleteStudent)
 	students.Post("/:id/reactivate", studentsHandler.ReactivateStudent)
+
+	// School profile (read-only for now)
+	schoolHandler := handlers.NewSchoolHandler(db)
+
+	school := api.Group("/school", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	school.Get("/", schoolHandler.Get)
 
 	// Academic Years (no DELETE — edit only)
 	academicYearHandler := handlers.NewAcademicYearHandler(db)
