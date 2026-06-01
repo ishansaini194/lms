@@ -6,15 +6,12 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame,
+  ModalShell, StateFrame, SearchInput, FilterSelect,
 } from '@/components/ui/primitives';
 import {
-  AdminChrome, AdminTopBar, Tabs, Segmented, Searchbox, Dropdown,
+  AdminChrome, AdminTopBar, Tabs, Segmented, Searchbox,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import {
-  studentStatuses, studentFeeHistory,
-} from '@/mock/data';
 import { StudentFormModal, ClassFormModal, ConfirmModal } from '@/pages/admin/extras.jsx';
 
 // Admin hi-fi · A1 Dashboard · A2 Classes · A3 Students · A3 Student detail
@@ -23,6 +20,16 @@ import { StudentFormModal, ClassFormModal, ConfirmModal } from '@/pages/admin/ex
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const monthName = (m) => MONTHS[(Number(m) || 1) - 1] || '—';
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
+
+// Fee-status → pill. "" / missing means the student has no fees yet.
+const feeStatusPill = (s) => {
+  switch (s) {
+    case 'paid':    return <Pill tone="good">Paid</Pill>;
+    case 'partial': return <Pill tone="warn">Partial</Pill>;
+    case 'unpaid':  return <Pill tone="accent" dot>Unpaid</Pill>;
+    default:        return <Pill tone="neutral">No fees</Pill>;
+  }
+};
 
 // ─── A1 · Dashboard ───────────────────────────────────────────────────────
 const HA1 = () => {
@@ -357,8 +364,17 @@ const HA2 = () => {
 const HA3 = () => {
   const navigate = useNavigate();
   const [showAdd, setShowAdd] = useState(false);
-  const statuses = studentStatuses;
-  const [status, setStatus] = useState('Active');
+
+  // Filters / pagination driving the list fetch.
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [classFilter, setClassFilter] = useState('');           // class_year_id, '' = all
+  const [statusFilter, setStatusFilter] = useState('active');   // 'active' | 'inactive'
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [classOptions, setClassOptions] = useState([{ value: '', label: 'All classes' }]);
+
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -370,12 +386,59 @@ const HA3 = () => {
 
   const loadStudents = () => {
     setLoading(true);
-    apiFetch('/api/students')
-      .then((res) => setRows(res.data || []))   // response is { data: [...], total, ... }
+    setError(null);
+    const params = new URLSearchParams({ page: String(page), limit: '50' });
+    if (debouncedSearch.trim()) params.set('search', debouncedSearch.trim());
+    if (classFilter) params.set('class_year_id', String(classFilter));
+    if (statusFilter === 'inactive') params.set('include_inactive', 'true');
+    apiFetch(`/api/students?${params.toString()}`)
+      .then((res) => {
+        const data = res.data || [];
+        // include_inactive returns active + inactive; the Inactive tab shows only
+        // deactivated rows (backend has no inactive-only filter — client-filter here).
+        setRows(statusFilter === 'inactive' ? data.filter((r) => r.is_active === false) : data);
+        setTotal(res.total || 0);
+        setTotalPages(res.total_pages || 1);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { loadStudents(); }, []);
+
+  // Debounce search keystrokes (300ms) before they hit the API.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  // Refetch on any settled filter / page change. Page resets happen in the
+  // change handlers so this never fires with a stale page.
+  useEffect(() => { loadStudents(); }, [debouncedSearch, classFilter, statusFilter, page]);
+
+  // Class filter options — current-AY class-years (fall back to all if none current).
+  useEffect(() => {
+    apiFetch('/api/class-years')
+      .then((data) => {
+        const arr = Array.isArray(data) ? data : [];
+        const currentOnly = arr.filter((cy) => cy.academic_year?.is_current);
+        const list = currentOnly.length ? currentOnly : arr;
+        const opts = list.map((cy) => ({
+          value: cy.id,
+          label: cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}`,
+        }));
+        setClassOptions([{ value: '', label: 'All classes' }, ...opts]);
+      })
+      .catch(() => {});
+  }, []);
+
+  const reactivate = async (id) => {
+    setError(null);
+    try {
+      await apiFetch(`/api/students/${id}/reactivate`, { method: 'POST' });
+      loadStudents();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
 
   // Build the edit-form prefill from a row's bare student fields.
   const editInitialFromRow = (r) => ({
@@ -421,14 +484,24 @@ const HA3 = () => {
           <Btn variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add student</Btn>
         </>}
       >
-        <div style={{ ...hfText.small, color: hf.muted }}>482 active · 12 inactive · 6 promoted</div>
+        <div style={{ ...hfText.small, color: hf.muted }}>{total} {statusFilter === 'inactive' ? 'inactive' : 'active'} students</div>
 
         {/* Filter row */}
         <Card padding={14} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <Dropdown label="Class" value="All" width={120} />
-          <Dropdown label="Section" value="All" width={130} />
+          <FilterSelect
+            label="Class"
+            value={classFilter}
+            onChange={(v) => { setClassFilter(v); setPage(1); }}
+            options={classOptions}
+            width={200}
+          />
           <div style={{ flex: 1, minWidth: 200 }}>
-            <Searchbox placeholder="Name, phone, Aadhar…" width={'100%'} />
+            <SearchInput
+              value={search}
+              onChange={(v) => { setSearch(v); setPage(1); }}
+              placeholder="Name, phone, Aadhar…"
+              width={'100%'}
+            />
           </div>
           <Btn variant="ghost" size="sm" icon={I.filter}>More filters</Btn>
         </Card>
@@ -436,9 +509,13 @@ const HA3 = () => {
         {/* Status segmented */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ ...hfText.small, color: hf.muted, fontWeight: 550 }}>Status</span>
-          <Segmented items={studentStatuses} active={status} onChange={setStatus} />
+          <Segmented
+            items={['Active', 'Inactive']}
+            active={statusFilter === 'inactive' ? 'Inactive' : 'Active'}
+            onChange={(v) => { setStatusFilter(v.toLowerCase()); setPage(1); }}
+          />
           <div style={{ flex: 1 }} />
-          <span style={{ ...hfText.small, color: hf.muted }}>Showing {rows.length} of 482</span>
+          <span style={{ ...hfText.small, color: hf.muted }}>Showing {rows.length} of {total}</span>
         </div>
 
         {/* Selection action bar */}
@@ -470,7 +547,7 @@ const HA3 = () => {
             ...hfText.micro, fontSize: 10,
           }}>
             <div onClick={toggleAll} className="hf-clickable"><span style={{ width: 16, height: 16, display: 'inline-flex', borderRadius: 4, background: allSel ? hf.primary : hf.surface, border: `1.5px solid ${allSel ? hf.primary : hf.faint}`, color: '#fff', alignItems: 'center', justifyContent: 'center' }}>{allSel && I.check}</span></div>
-            <div>Roll</div>
+            <div>Adm. no</div>
             <div />
             <div>Name</div>
             <div>Class</div>
@@ -508,16 +585,20 @@ const HA3 = () => {
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.muted }}>{r.admission_no}</div>
               <Avatar name={r.name} size={26} />
               <div style={{ ...hfText.small, fontWeight: 600 }}>{r.name}</div>
-              <div style={{ ...hfText.small, color: hf.muted }}>—</div>
-              <div style={{ ...hfText.small, color: hf.muted }}>—</div>
+              <div style={{ ...hfText.small, color: hf.ink2 }}>{r.class_label || '—'}</div>
+              <div style={{ ...hfText.small, color: hf.muted }}>{r.section || '—'}</div>
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.ink2 }}>{r.phone || '—'}</div>
-              <div style={{ ...hfText.small, color: hf.muted }}>—</div>
+              <div>{feeStatusPill(r.fee_status)}</div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                <button onClick={(e) => { e.stopPropagation(); setEditing(editInitialFromRow(r)); }} className="hf-btn" title="Edit" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
-                {r.is_active && (
-                  <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(r); }} className="hf-btn" title="Deactivate" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
-                  </button>
+                {statusFilter === 'inactive' ? (
+                  <button onClick={(e) => { e.stopPropagation(); reactivate(r.id); }} className="hf-btn" title="Reactivate" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.good, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.refresh}</button>
+                ) : (
+                  <>
+                    <button onClick={(e) => { e.stopPropagation(); setEditing(editInitialFromRow(r)); }} className="hf-btn" title="Edit" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
+                    <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(r); }} className="hf-btn" title="Deactivate" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                    </button>
+                  </>
                 )}
               </div>
             </div>
@@ -526,10 +607,10 @@ const HA3 = () => {
             padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2,
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           }}>
-            <span style={{ ...hfText.small, color: hf.muted }}>Page 1 of 44</span>
+            <span style={{ ...hfText.small, color: hf.muted }}>Page {page} of {totalPages}</span>
             <div style={{ display: 'flex', gap: 6 }}>
-              <Btn variant="outline" size="sm">‹</Btn>
-              <Btn variant="outline" size="sm">›</Btn>
+              <Btn variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>‹ Prev</Btn>
+              <Btn variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next ›</Btn>
             </div>
           </div>
         </Card>
@@ -635,6 +716,7 @@ const HA3Detail = () => {
                 {s.is_active
                   ? <Pill tone="good" dot>Active</Pill>
                   : <Pill tone="neutral">Inactive</Pill>}
+                {s.class_label && <Pill tone="primary">Class {s.class_label}</Pill>}
                 {s.gender && <Pill tone="neutral">{s.gender}</Pill>}
               </div>
             </div>
@@ -691,42 +773,13 @@ const HA3Detail = () => {
 
           {/* RIGHT: fee history */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* Fee history deferred to Fees phase — will use real balance calc */}
             <Card padding={0}>
-              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <div>
-                  <div style={{ ...hfText.h2 }}>Fee history</div>
-                  <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>AY 2025–26 · paid ₹3,600 / due ₹1,200</div>
-                </div>
-                <Pill tone="accent" dot>1 month due</Pill>
+              <div style={{ padding: '14px 18px', borderBottom: `1px solid ${hf.borderS}` }}>
+                <div style={{ ...hfText.h2 }}>Fee history</div>
               </div>
-              <div style={{
-                display: 'grid', gridTemplateColumns: '80px 80px 80px 100px 1fr',
-                padding: '10px 18px', background: hf.surface2,
-                borderBottom: `1px solid ${hf.borderS}`,
-                ...hfText.micro, fontSize: 10,
-              }}>
-                <div>Month</div><div>Amount</div><div>Paid</div><div>Status</div><div style={{ textAlign: 'right' }}>Receipt</div>
-              </div>
-              {studentFeeHistory.map((r, i) => (
-                <div key={i} className="hf-row" style={{
-                  display: 'grid', gridTemplateColumns: '80px 80px 80px 100px 1fr',
-                  padding: '11px 18px', alignItems: 'center',
-                  borderBottom: i < studentFeeHistory.length - 1 ? `1px solid ${hf.borderS}` : 'none',
-                }}>
-                  <div style={{ ...hfText.small, fontWeight: 600 }}>{r.m}</div>
-                  <div style={{ ...hfText.num, fontSize: 12 }}>₹{r.amt.toLocaleString('en-IN')}</div>
-                  <div style={{ ...hfText.num, fontSize: 12, color: r.paid ? hf.good : hf.muted }}>₹{r.paid.toLocaleString('en-IN')}</div>
-                  <div>
-                    <Pill tone={r.status === 'paid' ? 'good' : 'accent'} dot={r.status === 'unpaid'}>{r.status}</Pill>
-                  </div>
-                  <div style={{ textAlign: 'right', ...hfText.num, fontSize: 11, color: hf.muted }}>
-                    {r.rcp ? <>{r.rcp}<span style={{ color: hf.faint, marginLeft: 6 }}>· {r.when}</span></> : <span style={{ color: hf.faint }}>—</span>}
-                  </div>
-                </div>
-              ))}
-              <div style={{ padding: '12px 18px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ ...hfText.small, color: hf.muted }}>Previous: AY 2024–25 · paid ₹13,200 / due ₹0</span>
-                <Btn variant="ghost" size="sm">Expand {I.chev}</Btn>
+              <div style={{ padding: '40px 18px', textAlign: 'center' }}>
+                <div style={{ ...hfText.small, color: hf.muted }}>Fee history will appear here.</div>
               </div>
             </Card>
 
