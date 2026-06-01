@@ -17,6 +17,34 @@ func NewAuditLogsHandler(db *gorm.DB) *AuditLogsHandler {
 	return &AuditLogsHandler{DB: db}
 }
 
+// toUint coerces a value scanned from a map[string]interface{} row into a uint.
+// Returns ok=false for nil or zero (e.g. a null user_id).
+func toUint(v interface{}) (uint, bool) {
+	switch n := v.(type) {
+	case int64:
+		if n > 0 {
+			return uint(n), true
+		}
+	case int:
+		if n > 0 {
+			return uint(n), true
+		}
+	case uint:
+		if n > 0 {
+			return n, true
+		}
+	case uint64:
+		if n > 0 {
+			return uint(n), true
+		}
+	case float64:
+		if n > 0 {
+			return uint(n), true
+		}
+	}
+	return 0, false
+}
+
 // GET /api/audit-logs?entity_type=&entity_id=&user_id=&page=&limit=
 func (h *AuditLogsHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -60,6 +88,51 @@ func (h *AuditLogsHandler) List(c *fiber.Ctx) error {
 		Limit(limit).Offset(offset).
 		Find(&logs).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch audit logs"})
+	}
+
+	// Resolve actor names: collect user_ids from this page, do one batched
+	// lookup, and stamp user_name onto each row.
+	idSet := make(map[uint]struct{})
+	for _, log := range logs {
+		if id, ok := toUint(log["user_id"]); ok {
+			idSet[id] = struct{}{}
+		}
+	}
+	names := make(map[uint]string)
+	if len(idSet) > 0 {
+		ids := make([]uint, 0, len(idSet))
+		for id := range idSet {
+			ids = append(ids, id)
+		}
+		var users []struct {
+			ID          uint
+			Username    string
+			DisplayName *string
+		}
+		if err := h.DB.Table("users").
+			Select("id", "username", "display_name").
+			Where("id IN ?", ids).
+			Find(&users).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to resolve audit actors"})
+		}
+		for _, u := range users {
+			if u.DisplayName != nil && strings.TrimSpace(*u.DisplayName) != "" {
+				names[u.ID] = *u.DisplayName
+			} else {
+				names[u.ID] = u.Username
+			}
+		}
+	}
+	for _, log := range logs {
+		if id, ok := toUint(log["user_id"]); ok {
+			if name, found := names[id]; found {
+				log["user_name"] = name
+			} else {
+				log["user_name"] = "—"
+			}
+		} else {
+			log["user_name"] = "System"
+		}
 	}
 
 	totalPages := int(total) / limit

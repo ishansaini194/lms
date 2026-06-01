@@ -118,3 +118,12 @@ body {
   /* No app shadows/rounding/backgrounds bleed into the printed receipt. */
   .thermal-receipt * { box-shadow: none !important; border-radius: 0 !important; background: transparent !important; color: #000 !important; }
 }
+
+/* ─── Settings field primitives (focus ring + native control resets) ───── */
+.set-field { transition: border-color .12s, box-shadow .12s, background .12s; outline: none; }
+.set-field:focus, .set-field:focus-within {
+  border-color: oklch(0.45 0.15 265) !important;
+  box-shadow: 0 0 0 3px oklch(0.45 0.15 265 / 0.14);
+}
+.set-field::placeholder { color: #b8bfca; }
+select.set-field { appearance: none; -webkit-appearance: none; cursor: pointer; background-image: none; }

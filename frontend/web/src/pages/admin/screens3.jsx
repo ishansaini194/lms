@@ -11,10 +11,14 @@ import {
   ModalShell, StateFrame, SearchInput, FInput,
 } from '@/components/ui/primitives';
 import {
+  Field, SetInput, SetTextArea, SetSelect, SetToggleRow, LogoSlot, PanelHead,
+} from '@/components/ui/settings-fields';
+import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Dropdown,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
 import { HA7Modal, AcademicYearFormModal, ConfirmModal } from '@/pages/admin/extras.jsx';
+import { useAuth } from '@/auth/AuthContext';
 import {
   reportTerms,
 } from '@/mock/data';
@@ -506,6 +510,528 @@ const HA7ReportCard = () => {
 // ─── A9 · Settings → Academic Years tab ──────────────────────────────────
 // Render an ISO/string date as a short readable date.
 const fmtDate = (d) => (d ? new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—');
+
+// First letter of up to two words → logo/brand initials.
+const brandInitials = (name) => {
+  if (!name) return 'S';
+  return name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join('').toUpperCase() || 'S';
+};
+
+// Render a receipt-format template into a sample number. Year tokens are
+// anchored to the real current academic year (year_label like "2026-27").
+const renderReceiptSample = (fmt, code, startNum, yearLabel) => {
+  let yy = '26', yyNext = '27';
+  if (yearLabel && /^\d{4}-\d{2,4}$/.test(yearLabel)) {
+    const [a, b] = yearLabel.split('-');
+    yy = a.slice(-2);
+    yyNext = b.slice(-2);
+  }
+  return String(fmt || '')
+    .replace(/\$\{code\}/g, code || 'CODE')
+    .replace(/\$\{yy_next\}/g, yyNext)
+    .replace(/\$\{yy\}/g, yy)
+    .replace(/\$\{seq:(0+)\}/g, (_, z) => String(startNum ?? 1).padStart(z.length, '0'))
+    .replace(/\$\{seq\}/g, String(startNum ?? 1));
+};
+
+// School profile panel (ported from the Claude Design prototype). All data is
+// the live school object; `set(key, value)` mutates the working copy in HA9.
+const ProfilePanel = ({ school, set, currentYearLabel }) => {
+  const sample = renderReceiptSample(school.receipt_format, school.code, school.receipt_starting_num, currentYearLabel);
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16, alignItems: 'start' }}>
+      {/* Left column */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Identity */}
+        <Card padding={0}>
+          <PanelHead title="School identity" subtitle="Appears across the dashboard, login screen and printed receipts" />
+          <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 18 }}>
+            <LogoSlot src={school.logo_url} initials={brandInitials(school.name)} onChange={(v) => set('logo_url', v)} />
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 14 }}>
+              <Field label="School name" required>
+                <SetInput value={school.name} onChange={(v) => set('name', v)} placeholder="e.g. Kendriya Riverside" />
+              </Field>
+              <Field label="School code" required hint="Locked after setup">
+                <SetInput value={school.code} mono readOnly />
+              </Field>
+            </div>
+          </div>
+        </Card>
+
+        {/* Contact */}
+        <Card padding={0}>
+          <PanelHead title="Contact details" subtitle="Used on receipts and for parent communication" />
+          <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <Field label="Address">
+              <SetTextArea value={school.address} onChange={(v) => set('address', v)} placeholder="Street, city, state, PIN" />
+            </Field>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: 14 }}>
+              <Field label="Phone">
+                <SetInput value={school.phone} onChange={(v) => set('phone', v)} placeholder="+91 …" mono />
+              </Field>
+              <Field label="Email">
+                <SetInput value={school.email} onChange={(v) => set('email', v)} type="email" placeholder="office@school.edu.in" />
+              </Field>
+            </div>
+          </div>
+        </Card>
+
+        {/* Receipts */}
+        <Card padding={0}>
+          <PanelHead title="Receipt numbering" subtitle="Controls how fee receipt numbers are generated" />
+          <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <Field label="Receipt format" hint="Tokens: ${code} ${yy} ${yy_next} ${seq:0000}">
+              <SetInput value={school.receipt_format} onChange={(v) => set('receipt_format', v)} mono />
+            </Field>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+              <Field label="Reset sequence">
+                <SetSelect value={school.receipt_reset} onChange={(v) => set('receipt_reset', v)} options={[
+                  { value: 'yearly', label: 'Every academic year' },
+                  { value: 'monthly', label: 'Every month' },
+                  { value: 'never', label: 'Never (continuous)' },
+                ]} />
+              </Field>
+              <Field label="Starting number">
+                <SetInput type="number" value={school.receipt_starting_num} onChange={(v) => set('receipt_starting_num', Number(v) || 0)} mono />
+              </Field>
+            </div>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: '13px 16px', borderRadius: 11,
+              background: hf.surface2, border: `1px solid ${hf.borderS}`,
+            }}>
+              <span style={{ color: hf.muted, display: 'inline-flex' }}>{I.receipt}</span>
+              <div style={{ flex: 1 }}>
+                <div style={{ ...hfText.micro, fontSize: 9.5 }}>Receipt format preview</div>
+                <div style={{ ...hfText.num, fontSize: 16, fontWeight: 700, color: hf.primary, marginTop: 2 }}>{sample || '—'}</div>
+              </div>
+              <Pill tone="neutral">Live preview</Pill>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Right column */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Brand preview */}
+        <Card padding={0}>
+          <PanelHead title="Preview" subtitle="How your brand appears" />
+          <div style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 12,
+              padding: 14, borderRadius: 12,
+              background: `linear-gradient(135deg, ${hf.primarySoft}, ${hf.surface} 75%)`,
+              border: `1px solid ${hf.primaryEdge}`,
+            }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 11, overflow: 'hidden', flexShrink: 0,
+                background: school.logo_url ? '#fff' : `linear-gradient(135deg, ${hf.primary}, oklch(0.55 0.16 290))`,
+                color: '#fff', fontWeight: 700, fontSize: 15,
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                border: school.logo_url ? `1px solid ${hf.border}` : 'none',
+              }}>
+                {school.logo_url ? <img src={school.logo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : brandInitials(school.name)}
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: hf.ink, letterSpacing: '-0.01em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{school.name || 'School name'}</div>
+                <div style={{ fontSize: 11.5, color: hf.muted, fontFamily: hfFonts.mono }}>{school.code || 'CODE'}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+              {[
+                { icon: I.phone, v: school.phone || '—' },
+                { icon: I.bell, v: school.email || '—' },
+                { icon: I.home, v: (school.address || '—').split('\n')[0] },
+              ].map((r, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 9, ...hfText.small, color: hf.ink2 }}>
+                  <span style={{ color: hf.muted, display: 'inline-flex' }}>{r.icon}</span>
+                  <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.v}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        {/* Notifications */}
+        <Card padding={0}>
+          <PanelHead title="Notifications" />
+          <div style={{ padding: 18 }}>
+            <SetToggleRow
+              icon={I.phone}
+              title="SMS notifications"
+              desc="Saves your preference. SMS delivery will activate once the gateway is connected."
+              checked={school.sms_enabled}
+              onChange={(v) => set('sms_enabled', v)}
+            />
+          </div>
+        </Card>
+
+        {/* Metadata */}
+        <Card style={{ background: hf.surface2 }}>
+          <div style={{ ...hfText.micro, fontSize: 9.5, marginBottom: 10 }}>Record</div>
+          {[
+            { k: 'School ID', v: `#${school.id}`, mono: true },
+            { k: 'Created', v: fmtDateTime(school.created_at) },
+            { k: 'Last updated', v: fmtDateTime(school.updated_at) },
+          ].map((r, i) => (
+            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: i < 2 ? `1px solid ${hf.borderS}` : 'none' }}>
+              <span style={{ ...hfText.small, color: hf.muted }}>{r.k}</span>
+              <span style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, fontFamily: r.mono ? hfFonts.mono : hfFonts.ui }}>{r.v}</span>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
+  );
+};
+
+// ─── Audit log (Settings · audit tab) ─────────────────────────────────────
+// Wires only what's actually logged today: mutations on fee / payment /
+// enrolment / school. Plain list, newest-first, real data only.
+const fmtAuditTime = (d) => (d
+  ? new Date(d).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata',
+    })
+  : '—');
+
+const capWord = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+// "Updated fee #42", "Recorded payment #17", "Updated school" (no id for school).
+const auditLine = (log) => {
+  const action = capWord(log.action || '');
+  const type = log.entity_type || '';
+  if (type === 'school') return `${action} ${type}`.trim();
+  return `${action} ${type} #${log.entity_id}`.trim();
+};
+
+const AuditPager = ({ page, totalPages, onPage }) => (
+  <div style={{
+    padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2,
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+  }}>
+    <span style={{ ...hfText.small, color: hf.muted }}>Page {page} of {totalPages || 1}</span>
+    <div style={{ display: 'flex', gap: 6 }}>
+      <Btn variant="outline" size="sm" disabled={page <= 1} onClick={() => onPage(Math.max(1, page - 1))}>‹ Prev</Btn>
+      <Btn variant="outline" size="sm" disabled={page >= (totalPages || 1)} onClick={() => onPage(page + 1)}>Next ›</Btn>
+    </div>
+  </div>
+);
+
+const AuditPanel = () => {
+  const [logs, setLogs] = useState([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setLoading(true);
+    apiFetch(`/api/audit-logs?page=${page}&limit=50`)
+      .then((res) => {
+        setLogs(Array.isArray(res.data) ? res.data : []);
+        setTotalPages(res.total_pages || 1);
+        setError(null);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, [page]);
+
+  return (
+    <Card padding={0}>
+      <PanelHead title="Audit log" subtitle="Recent changes to fees, payments, enrolments and school settings" />
+      {loading ? (
+        <div style={{ padding: 48, textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>
+      ) : error ? (
+        <div style={{ padding: 48, textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load audit log: {error}</div>
+      ) : logs.length === 0 ? (
+        <div style={{ padding: 48, textAlign: 'center', ...hfText.small, color: hf.muted }}>No activity recorded yet.</div>
+      ) : (
+        <>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {logs.map((log) => (
+              <div key={log.id} style={{
+                display: 'grid', gridTemplateColumns: '170px 1fr', gap: 16,
+                padding: '13px 18px', borderTop: `1px solid ${hf.borderS}`, alignItems: 'center',
+              }}>
+                <div style={{ ...hfText.small, color: hf.muted, ...hfText.num }}>{fmtAuditTime(log.created_at)}</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                  <span style={{ ...hfText.body, color: hf.ink }}>{auditLine(log)}</span>
+                  <span style={{
+                    ...hfText.micro, color: hf.muted, background: hf.surface2,
+                    border: `1px solid ${hf.borderS}`, borderRadius: 6, padding: '1px 7px',
+                  }}>{log.entity_type}</span>
+                  <span style={{ ...hfText.small, color: hf.ink2, marginLeft: 'auto' }}>{log.user_name}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <AuditPager page={page} totalPages={totalPages} onPage={setPage} />
+        </>
+      )}
+    </Card>
+  );
+};
+
+// ─── Users & roles (Settings · users tab) ─────────────────────────────────
+// Admins + teachers only — students are managed on the Students page, and
+// there are no parent accounts. Teacher deactivate/reactivate routes through
+// the teacher endpoints (which sync both rows); admin users use the user
+// endpoints. Reset reuses the shared reset-password flow.
+const fmtLastLogin = (d) => (d
+  ? new Date(d).toLocaleString('en-GB', {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata',
+    })
+  : null);
+
+const USERS_GRID = '1.7fr 110px 1.4fr 160px 110px 96px';
+
+const AdminUsersPanel = () => {
+  const { user: me } = useAuth();
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  // Filters (client-side — the admin+teacher set is small).
+  const [search, setSearch] = useState('');
+  const [debounced, setDebounced] = useState('');
+  const [roleFilter, setRoleFilter] = useState(''); // '' | 'admin' | 'teacher'
+  const [statusFilter, setStatusFilter] = useState('active'); // 'active' | 'inactive'
+
+  // Reset-password flow (mirrors the Teachers page).
+  const [resetting, setResetting] = useState(null);
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetErr, setResetErr] = useState('');
+  const [resetResult, setResetResult] = useState(null);
+
+  // Deactivate flow.
+  const [deactivating, setDeactivating] = useState(null);
+  const [deBusy, setDeBusy] = useState(false);
+  const [deErr, setDeErr] = useState('');
+
+  // Load the full set (active + inactive) once for honest counts.
+  const loadUsers = () => {
+    setLoading(true);
+    apiFetch('/api/users?include_inactive=true')
+      .then((data) => { setUsers(Array.isArray(data) ? data : []); setError(null); })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { loadUsers(); }, []);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const labelOf = (u) => u.display_name || u.username;
+
+  const confirmReset = async () => {
+    if (!resetting) return;
+    setResetBusy(true);
+    setResetErr('');
+    try {
+      // Empty body → backend resets to the default password and echoes it.
+      const res = await apiFetch(`/api/auth/reset-password/${resetting.id}`, { method: 'POST', body: {} });
+      setResetResult({ name: labelOf(resetting), password: res.password || null });
+      setResetting(null);
+    } catch (e) {
+      setResetErr(e.message);
+    } finally {
+      setResetBusy(false);
+    }
+  };
+
+  // Teacher users route through the teacher endpoints (which sync teacher +
+  // user rows); admin users use the dedicated user endpoints.
+  const confirmDeactivate = async () => {
+    if (!deactivating) return;
+    setDeBusy(true);
+    setDeErr('');
+    try {
+      const path = deactivating.teacher_id
+        ? `/api/teachers/${deactivating.teacher_id}`
+        : `/api/users/${deactivating.id}/deactivate`;
+      const method = deactivating.teacher_id ? 'DELETE' : 'POST';
+      await apiFetch(path, { method });
+      setDeactivating(null);
+      loadUsers();
+    } catch (e) {
+      setDeErr(e.message);
+    } finally {
+      setDeBusy(false);
+    }
+  };
+
+  const reactivate = async (u) => {
+    setError(null);
+    try {
+      const path = u.teacher_id
+        ? `/api/teachers/${u.teacher_id}/reactivate`
+        : `/api/users/${u.id}/reactivate`;
+      await apiFetch(path, { method: 'POST' });
+      loadUsers();
+    } catch (e) {
+      setError(e.message);
+    }
+  };
+
+  const total = users.length;
+  const q = debounced.trim().toLowerCase();
+  const filtered = users.filter((u) => {
+    if (statusFilter === 'active' && !u.is_active) return false;
+    if (statusFilter === 'inactive' && u.is_active) return false;
+    if (roleFilter && u.role !== roleFilter) return false;
+    if (q) {
+      const hay = `${u.display_name || ''} ${u.username || ''} ${u.linked || ''}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  const roleItems = ['All', 'Admins', 'Teachers'];
+  const roleActive = roleFilter === 'admin' ? 'Admins' : roleFilter === 'teacher' ? 'Teachers' : 'All';
+  const onRole = (v) => setRoleFilter(v === 'Admins' ? 'admin' : v === 'Teachers' ? 'teacher' : '');
+
+  return (
+    <>
+      <Card padding={0}>
+        <PanelHead title="Users & roles" subtitle="Admin and teacher login accounts for your school" />
+
+        <div style={{ padding: 14, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderBottom: `1px solid ${hf.borderS}` }}>
+          <div style={{ flex: 1, minWidth: 240 }}>
+            <SearchInput value={search} onChange={setSearch} placeholder="Search name, username, linked…" width="100%" />
+          </div>
+          <Segmented items={roleItems} active={roleActive} onChange={onRole} />
+          <Segmented items={['Active', 'Inactive']} active={statusFilter === 'inactive' ? 'Inactive' : 'Active'} onChange={(v) => setStatusFilter(v.toLowerCase())} />
+        </div>
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: USERS_GRID,
+          padding: '11px 20px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+          ...hfText.micro, fontSize: 10,
+        }}>
+          <div>User</div><div>Role</div><div>Linked to</div><div>Last login</div><div>Status</div><div style={{ textAlign: 'right' }}>Actions</div>
+        </div>
+
+        {loading && <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading users…</div>}
+        {error && !loading && <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load users: {error}</div>}
+        {!loading && !error && users.length === 0 && <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No admin or teacher accounts yet.</div>}
+        {!loading && !error && users.length > 0 && filtered.length === 0 && <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No {statusFilter} users match your filters.</div>}
+
+        {!loading && !error && filtered.map((u, i) => {
+          const isMe = me && u.id === me.id;
+          const lastLogin = fmtLastLogin(u.last_login_at);
+          return (
+            <div key={u.id} className="hf-row" style={{
+              display: 'grid', gridTemplateColumns: USERS_GRID,
+              padding: '11px 20px', alignItems: 'center',
+              borderBottom: i < filtered.length - 1 ? `1px solid ${hf.borderS}` : 'none',
+              opacity: u.is_active ? 1 : 0.62,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Avatar name={labelOf(u)} size={28} />
+                <div>
+                  <div style={{ ...hfText.small, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {labelOf(u)}
+                    {isMe && <Pill tone="primary">You</Pill>}
+                  </div>
+                  <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>@{u.username}</div>
+                </div>
+              </div>
+              <div>{u.role === 'admin' ? <Pill tone="warn">Admin</Pill> : <Pill tone="neutral">Teacher</Pill>}</div>
+              <div style={{ ...hfText.small, color: hf.ink2 }}>{u.linked || <span style={{ color: hf.faint }}>—</span>}</div>
+              <div style={{ ...hfText.small }}>
+                {lastLogin
+                  ? <span style={{ ...hfText.num, fontSize: 11.5, color: hf.ink2 }}>{lastLogin}</span>
+                  : <span style={{ color: hf.faint }}>Never</span>}
+              </div>
+              <div>{u.is_active ? <Pill tone="good" dot>Active</Pill> : <Pill tone="neutral">Deactivated</Pill>}</div>
+              <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => { if (isMe) return; setResetErr(''); setResetting(u); }}
+                  className="hf-btn" title={isMe ? 'You can\'t reset your own password here' : 'Reset password'}
+                  disabled={isMe}
+                  style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: isMe ? 0.35 : 1, cursor: isMe ? 'not-allowed' : 'pointer' }}
+                >{I.lock}</button>
+                {u.is_active ? (
+                  <button
+                    onClick={() => { if (isMe) return; setDeErr(''); setDeactivating(u); }}
+                    className="hf-btn" title={isMe ? 'You can\'t deactivate your own account' : 'Deactivate'}
+                    disabled={isMe}
+                    style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', opacity: isMe ? 0.35 : 1, cursor: isMe ? 'not-allowed' : 'pointer' }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                  </button>
+                ) : (
+                  <button onClick={() => reactivate(u)} className="hf-btn" title="Reactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.good, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.refresh}</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={{ padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, ...hfText.small, color: hf.muted }}>
+          Showing {filtered.length} of {total} account{total === 1 ? '' : 's'} · only admins can manage users. Teachers are added on the Teachers page; students on the Students page.
+        </div>
+      </Card>
+
+      {resetting && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ConfirmModal
+            title="Reset password?"
+            message={`Reset the password for ${labelOf(resetting)}? They'll get the default password and must change it on first login.`}
+            confirmLabel="Reset password"
+            danger={false}
+            onConfirm={confirmReset}
+            onCancel={() => setResetting(null)}
+            busy={resetBusy}
+            error={resetErr}
+          />
+        </div>
+      )}
+      {deactivating && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ConfirmModal
+            title="Deactivate user?"
+            message={`This blocks ${labelOf(deactivating)} from signing in but keeps their records. You can reactivate them later.`}
+            confirmLabel="Deactivate"
+            onConfirm={confirmDeactivate}
+            onCancel={() => setDeactivating(null)}
+            busy={deBusy}
+            error={deErr}
+          />
+        </div>
+      )}
+      {resetResult && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <div onClick={() => setResetResult(null)} style={{ position: 'absolute', inset: 0 }}>
+            <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+              <ModalShell
+                title="Password reset"
+                width={420}
+                footer={<Btn variant="primary" size="md" onClick={() => setResetResult(null)}>Done</Btn>}
+              >
+                <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+                  {resetResult.name}'s password has been reset.
+                </div>
+                {resetResult.password && (
+                  <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 10, background: hf.surface2, border: `1px solid ${hf.borderS}` }}>
+                    <div style={{ ...hfText.micro, fontSize: 10 }}>New password</div>
+                    <div style={{ ...hfText.num, fontSize: 20, fontWeight: 700, marginTop: 4 }}>{resetResult.password}</div>
+                    <div style={{ ...hfText.small, color: hf.muted, marginTop: 6 }}>Share this with the user · they'll be asked to change it on first login.</div>
+                  </div>
+                )}
+              </ModalShell>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+};
 
 const HA9 = () => {
   const [tab, setTab] = useState('years');
@@ -513,6 +1039,13 @@ const HA9 = () => {
   const [years, setYears] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+
+  // School profile state (working copy + saved snapshot for dirty tracking).
+  const [school, setSchool] = useState(null);
+  const [savedSchool, setSavedSchool] = useState(null);
+  const [schoolErr, setSchoolErr] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState('');
 
   const loadYears = () => {
     setLoading(true);
@@ -523,7 +1056,47 @@ const HA9 = () => {
   };
   useEffect(() => { loadYears(); }, []);
 
+  useEffect(() => {
+    apiFetch('/api/school')
+      .then((d) => { setSchool(d); setSavedSchool(d); })
+      .catch((e) => setSchoolErr(e.message));
+  }, []);
+
   const current = years.find((y) => y.is_current) || null;
+
+  const setField = (k, v) => setSchool((s) => ({ ...s, [k]: v }));
+  const dirty = school && savedSchool && JSON.stringify(school) !== JSON.stringify(savedSchool);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2600); };
+
+  const saveProfile = async () => {
+    if (!dirty) return;
+    setSaving(true);
+    try {
+      const updated = await apiFetch('/api/school', {
+        method: 'PUT',
+        body: {
+          name: school.name,
+          address: school.address,
+          phone: school.phone,
+          email: school.email,
+          logo_url: school.logo_url,
+          receipt_format: school.receipt_format,
+          receipt_reset: school.receipt_reset,
+          receipt_starting_num: school.receipt_starting_num,
+          sms_enabled: school.sms_enabled,
+        },
+      });
+      setSchool(updated);
+      setSavedSchool(updated);
+      showToast('School profile saved');
+    } catch (e) {
+      showToast(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const cancelProfile = () => setSchool(savedSchool);
 
   return (
     <>
@@ -531,25 +1104,40 @@ const HA9 = () => {
       active="Settings"
       breadcrumb="Home · Settings"
       title="Settings"
-      topRight={<>
-        <Btn variant="outline" size="sm">Cancel</Btn>
-        <Btn variant="primary" size="sm">Save changes</Btn>
-      </>}
+      topRight={tab === 'profile' ? (
+        <>
+          {dirty && <span style={{ ...hfText.small, color: hf.muted }}>Unsaved changes</span>}
+          <Btn variant="outline" size="sm" onClick={cancelProfile} disabled={!dirty || saving}>Cancel</Btn>
+          <Btn variant="primary" size="sm" onClick={saveProfile} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save changes'}</Btn>
+        </>
+      ) : undefined}
     >
       <Tabs items={[
         { label: 'School profile',  id: 'profile' },
         { label: 'Academic years',  id: 'years' },
-        { label: 'Users & roles',   id: 'users', count: 12 },
+        { label: 'Users & roles',   id: 'users' },
         { label: 'Fee plans',       id: 'fees' },
         { label: 'Audit log',       id: 'audit' },
       ]} active={tab} onChange={setTab} />
 
-      {tab !== 'years' && (
+      {tab === 'profile' && (
+        school
+          ? <ProfilePanel school={school} set={setField} currentYearLabel={current?.year_label} />
+          : <Card padding={48} style={{ textAlign: 'center', ...hfText.small, color: schoolErr ? hf.accent : hf.muted }}>
+              {schoolErr ? `Couldn't load school profile: ${schoolErr}` : 'Loading…'}
+            </Card>
+      )}
+
+      {tab === 'fees' && (
         <Card padding={48} style={{ textAlign: 'center' }}>
           <div style={{ ...hfText.h2, color: hf.ink2, marginBottom: 6 }}>Coming soon</div>
           <div style={{ ...hfText.small, color: hf.muted }}>This settings section isn't built yet.</div>
         </Card>
       )}
+
+      {tab === 'users' && <AdminUsersPanel />}
+
+      {tab === 'audit' && <AuditPanel />}
 
       {tab === 'years' && (<>
 
@@ -688,6 +1276,13 @@ const HA9 = () => {
           onSaved={() => { setYearModal(null); loadYears(); }}
         />
       </div>
+    )}
+    {toast && (
+      <div style={{
+        position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1100,
+        background: hf.ink, color: '#fff', padding: '10px 18px', borderRadius: 10,
+        ...hfText.small, fontWeight: 600, boxShadow: hf.shadowLg,
+      }}>{toast}</div>
     )}
     </>
   );

@@ -82,6 +82,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 
 	school := api.Group("/school", middleware.AuthRequired(), middleware.RequireRole("admin"))
 	school.Get("/", schoolHandler.Get)
+	school.Put("/", schoolHandler.Update)
 
 	// Academic Years (no DELETE — edit only)
 	academicYearHandler := handlers.NewAcademicYearHandler(db)
@@ -198,6 +199,14 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	payments.Get("/", paymentsHandler.List)
 	payments.Post("/", paymentsHandler.Create)
 	payments.Post("/:id/reverse", paymentsHandler.Reverse)
+
+	// Users & roles (admins + teachers; students managed via /students)
+	usersHandler := handlers.NewUsersHandler(db)
+
+	users := api.Group("/users", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	users.Get("/", usersHandler.List)
+	users.Post("/:id/deactivate", usersHandler.Deactivate)
+	users.Post("/:id/reactivate", usersHandler.Reactivate)
 
 	// Audit Logs
 	auditHandler := handlers.NewAuditLogsHandler(db)
