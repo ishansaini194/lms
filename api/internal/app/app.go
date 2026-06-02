@@ -1,8 +1,10 @@
 package app
 
 import (
+	"os"
 	"time"
 
+	"github.com/ansrivas/fiberprometheus/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
@@ -25,16 +27,34 @@ func New() (*server.Server, error) {
 }
 
 func registerRoutes(srv *server.Server, db *gorm.DB) {
+	// Prometheus metrics — registered before routes so it instruments all
+	// requests. /metrics is bound to localhost only and is intentionally NOT
+	// proxied through nginx, so it stays private (local scraping only).
+	prometheus := fiberprometheus.New("studyme")
+	prometheus.RegisterAt(srv.App, "/metrics")
+	srv.App.Use(prometheus.Middleware)
+
 	api := srv.App.Group("/api")
 
 	// ---------- Public routes ----------
 	authHandler := handlers.NewAuthHandler(db)
 
+	allowOrigins := os.Getenv("CORS_ORIGINS")
+	if allowOrigins == "" {
+		allowOrigins = "http://localhost:5173"
+	}
+
 	srv.App.Use(cors.New(cors.Config{
-		AllowOrigins: "http://localhost:5173",
+		AllowOrigins: allowOrigins,
 		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
 		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS",
 	}))
+
+	// Public health check — no auth, no DB/version info. For Docker
+	// healthcheck and uptime monitoring.
+	api.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{"status": "ok"})
+	})
 
 	loginLimiter := limiter.New(limiter.Config{
 		Max:        10,
