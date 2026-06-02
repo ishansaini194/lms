@@ -27,7 +27,61 @@ func NewLibraryHandler(db *gorm.DB, baseDir string) *LibraryHandler {
 const maxLibraryFileSize = 25 * 1024 * 1024 // 25 MB
 
 var validLibraryCategories = map[string]bool{
-	"syllabus": true, "notes": true, "datesheet": true, "circular": true, "other": true,
+	"syllabus": true, "notes": true, "pyq": true, "datesheet": true, "circular": true, "other": true,
+}
+
+// libraryListItem enriches a file with the uploader's display name for the
+// browse view. Mirrors noticeListItem/examListItem.
+type libraryListItem struct {
+	models.Library
+	UploadedByName string `json:"uploaded_by_name"`
+}
+
+// enrichLibrary attaches the uploader's name via one batched users query (no
+// N+1). Falls back to "Staff" if the uploader's user row is gone. Order kept.
+func (h *LibraryHandler) enrichLibrary(schoolID uint, files []models.Library) []libraryListItem {
+	items := make([]libraryListItem, len(files))
+	for i := range files {
+		items[i] = libraryListItem{Library: files[i], UploadedByName: "Staff"}
+	}
+	if len(files) == 0 {
+		return items
+	}
+
+	userIDSet := map[uint]bool{}
+	userIDs := []uint{}
+	for _, f := range files {
+		if !userIDSet[f.UploadedByID] {
+			userIDSet[f.UploadedByID] = true
+			userIDs = append(userIDs, f.UploadedByID)
+		}
+	}
+
+	type uRow struct {
+		ID          uint
+		Username    string
+		DisplayName *string
+	}
+	var uRows []uRow
+	h.DB.Table("users").
+		Select("id, username, display_name").
+		Where("school_id = ? AND id IN ?", schoolID, userIDs).
+		Scan(&uRows)
+	nameByUser := map[uint]string{}
+	for _, u := range uRows {
+		if u.DisplayName != nil && *u.DisplayName != "" {
+			nameByUser[u.ID] = *u.DisplayName
+		} else {
+			nameByUser[u.ID] = u.Username
+		}
+	}
+
+	for i := range items {
+		if name, ok := nameByUser[items[i].UploadedByID]; ok {
+			items[i].UploadedByName = name
+		}
+	}
+	return items
 }
 
 // GET /api/library?category=&subject=&class_number=&academic_year_id=
@@ -56,7 +110,7 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 	if err := query.Order("created_at DESC").Find(&files).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch library files"})
 	}
-	return c.JSON(files)
+	return c.JSON(h.enrichLibrary(schoolID, files))
 }
 
 // POST /api/library  (multipart/form-data)
@@ -209,6 +263,13 @@ func (h *LibraryHandler) Delete(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
+	// A teacher may delete only files she uploaded; admin may delete any.
+	// 404 (not 403) — don't reveal another teacher's file exists. Matches the
+	// project's ownership convention (exams/enrollments).
+	if isTeacher(c) && lf.UploadedByID != middleware.GetUserID(c) {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file not found"})
 	}
 
 	// Delete DB row first; if that succeeds, remove the disk file.

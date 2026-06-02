@@ -87,11 +87,13 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Academic Years (no DELETE — edit only)
 	academicYearHandler := handlers.NewAcademicYearHandler(db)
 
-	academicYears := api.Group("/academic-years", middleware.AuthRequired(), middleware.RequireRole("admin"))
-	academicYears.Get("/", academicYearHandler.List)
-	academicYears.Get("/:id", academicYearHandler.GetOne)
-	academicYears.Post("/", academicYearHandler.Create)
-	academicYears.Put("/:id", academicYearHandler.Update)
+	// Reads open to teachers too (e.g. the library upload needs the current AY);
+	// mutations stay admin-only.
+	academicYears := api.Group("/academic-years", middleware.AuthRequired())
+	academicYears.Get("/", middleware.RequireRole("admin", "teacher"), academicYearHandler.List)
+	academicYears.Get("/:id", middleware.RequireRole("admin", "teacher"), academicYearHandler.GetOne)
+	academicYears.Post("/", middleware.RequireRole("admin"), academicYearHandler.Create)
+	academicYears.Put("/:id", middleware.RequireRole("admin"), academicYearHandler.Update)
 
 	// Classes
 	classHandler := handlers.NewClassHandler(db)
@@ -161,6 +163,15 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	dashboard := api.Group("/dashboard", middleware.AuthRequired(), middleware.RequireRole("admin"))
 	dashboard.Get("/stats", dashboardHandler.Stats)
 
+	// Teacher dashboard
+	teacherDashboardHandler := handlers.NewTeacherDashboardHandler(db)
+
+	teacherDash := api.Group("/teacher", middleware.AuthRequired(), middleware.RequireRole("teacher"))
+	teacherDash.Get("/dashboard", teacherDashboardHandler.Dashboard)
+
+	teacherProfileHandler := handlers.NewTeacherProfileHandler(db)
+	teacherDash.Get("/profile", teacherProfileHandler.Profile)
+
 	// Assessments
 	assessmentsHandler := handlers.NewAssessmentsHandler(db)
 
@@ -176,11 +187,19 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Library
 	libraryHandler := handlers.NewLibraryHandler(db, "uploads/library")
 
-	library := api.Group("/library", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	library := api.Group("/library", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	library.Get("/", libraryHandler.List)
 	library.Post("/", libraryHandler.Upload)
 	library.Get("/:id/download", libraryHandler.Download)
 	library.Delete("/:id", libraryHandler.Delete)
+
+	// Teaching Assignments (admin manages who teaches what)
+	taHandler := handlers.NewTeachingAssignmentsHandler(db)
+
+	teachingAssignments := api.Group("/teaching-assignments", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	teachingAssignments.Get("/", taHandler.List)
+	teachingAssignments.Post("/", taHandler.Create)
+	teachingAssignments.Delete("/:id", taHandler.Delete)
 
 	// Fees
 	feesHandler := handlers.NewFeesHandler(db)

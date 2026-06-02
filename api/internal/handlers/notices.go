@@ -356,6 +356,14 @@ func (h *NoticesHandler) Delete(c *fiber.Ctx) error {
 }
 
 // validateAndInsertTargets verifies each class_year belongs to the school, then bulk-inserts targets.
+//
+// TODO(authz): for teachers this only checks the class_year is in their school,
+// not that they teach/own it — and Create/Update don't force target_all_school
+// to false for teachers, so a teacher could in principle post school-wide or to
+// classes she doesn't teach. The UI prevents both (her-classes-only picker, no
+// whole-school option). To harden: when isTeacher, force target_all_school=false
+// and reject any class_year_id not in teacherClassYearIDs(...). Track alongside
+// the same gap in homeworks.go for one combined hardening pass.
 func (h *NoticesHandler) validateAndInsertTargets(tx *gorm.DB, schoolID, noticeID uint, classYearIDs []uint) error {
 	// Dedupe
 	seen := map[uint]bool{}

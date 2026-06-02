@@ -68,11 +68,11 @@ func (h *EnrollmentsHandler) List(c *fiber.Ctx) error {
 		query = query.Where("status = ?", status)
 	}
 	if isTeacher(c) {
-		query = query.Where("class_year_id IN (?)",
-			h.DB.Model(&models.ClassYear{}).
-				Select("id").
-				Where("school_id = ? AND class_teacher_id = ?", schoolID, middleware.GetTeacherID(c)),
-		)
+		// Scope to the union of her class-teacher classes and subject-teaching
+		// assignments. Single IN over a Go-resolved set — see teacherClassYearIDs
+		// for why we don't inline an OR here. Empty set → IN (NULL) → no rows.
+		cyIDs := teacherClassYearIDs(h.DB, middleware.GetTeacherID(c), schoolID)
+		query = query.Where("class_year_id IN ?", cyIDs)
 	}
 
 	var total int64
@@ -129,7 +129,7 @@ func (h *EnrollmentsHandler) GetOne(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 	if isTeacher(c) {
-		if !teacherOwnsClassYear(h.DB, middleware.GetTeacherID(c), enrollment.ClassYearID, schoolID) {
+		if !teacherCanSeeClassYear(h.DB, middleware.GetTeacherID(c), enrollment.ClassYearID, schoolID) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "enrollment not found"})
 		}
 	}

@@ -40,6 +40,14 @@ type homeworkResponse struct {
 	ClassYearIDs []uint `json:"class_year_ids"`
 }
 
+// homeworkListItem enriches a Homework with its target class_year IDs and labels
+// for the list view chips. Mirrors examListItem/noticeListItem.
+type homeworkListItem struct {
+	models.Homework
+	ClassYearIDs []uint   `json:"class_year_ids"`
+	ClassLabels  []string `json:"class_labels"` // ["2-A", "3-A"]
+}
+
 // GET /api/homeworks?include_inactive=&class_year_id=&teacher_id=
 func (h *HomeworksHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -69,7 +77,78 @@ func (h *HomeworksHandler) List(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch homeworks"})
 	}
 
-	return c.JSON(homeworks)
+	return c.JSON(h.enrichHomeworks(schoolID, homeworks))
+}
+
+// enrichHomeworks attaches target class_year IDs + labels via two batched queries
+// (no N+1). Order preserved. Both slices are non-nil so JSON is [] not null.
+func (h *HomeworksHandler) enrichHomeworks(schoolID uint, homeworks []models.Homework) []homeworkListItem {
+	items := make([]homeworkListItem, len(homeworks))
+	idxByHW := make(map[uint]int, len(homeworks))
+	for i := range homeworks {
+		items[i] = homeworkListItem{Homework: homeworks[i], ClassYearIDs: []uint{}, ClassLabels: []string{}}
+		idxByHW[homeworks[i].ID] = i
+	}
+	if len(homeworks) == 0 {
+		return items
+	}
+
+	hwIDs := make([]uint, len(homeworks))
+	for i, hw := range homeworks {
+		hwIDs[i] = hw.ID
+	}
+
+	// All (homework_id, class_year_id) target pairs, ordered for stable chips.
+	type targetRow struct {
+		HomeworkID  uint
+		ClassYearID uint
+	}
+	var targets []targetRow
+	h.DB.Table("homework_targets").
+		Select("homework_id, class_year_id").
+		Where("homework_id IN ?", hwIDs).
+		Order("class_year_id ASC").
+		Scan(&targets)
+
+	// class_year → label for the distinct target set.
+	cySet := map[uint]bool{}
+	for _, t := range targets {
+		cySet[t.ClassYearID] = true
+	}
+	labelByCY := map[uint]string{}
+	if len(cySet) > 0 {
+		cyIDs := make([]uint, 0, len(cySet))
+		for id := range cySet {
+			cyIDs = append(cyIDs, id)
+		}
+		type clRow struct {
+			ID      uint
+			Name    string
+			Section string
+		}
+		var rows []clRow
+		h.DB.Table("class_years").
+			Select("class_years.id, classes.name, classes.section").
+			Joins("JOIN classes ON classes.id = class_years.class_id").
+			Where("class_years.school_id = ? AND class_years.id IN ?", schoolID, cyIDs).
+			Scan(&rows)
+		for _, r := range rows {
+			label := r.Name
+			if r.Section != "" {
+				label += "-" + r.Section
+			}
+			labelByCY[r.ID] = label
+		}
+	}
+
+	for _, t := range targets {
+		i := idxByHW[t.HomeworkID]
+		items[i].ClassYearIDs = append(items[i].ClassYearIDs, t.ClassYearID)
+		if label, ok := labelByCY[t.ClassYearID]; ok {
+			items[i].ClassLabels = append(items[i].ClassLabels, label)
+		}
+	}
+	return items
 }
 
 // GET /api/homeworks/:id  (includes target class_year IDs)
@@ -279,6 +358,12 @@ func (h *HomeworksHandler) Delete(c *fiber.Ctx) error {
 }
 
 // validateAndInsertTargets verifies each class_year belongs to the school, then bulk-inserts.
+//
+// TODO(authz): for teachers this only checks the class_year is in their school,
+// not that they actually teach/own it — a teacher could POST homework targeting
+// any class in the school. The UI picker prevents this in normal use. To harden:
+// when isTeacher, reject any class_year_id not in teacherClassYearIDs(...) (the
+// helper already exists from the enrollments scope work) and return 400.
 func (h *HomeworksHandler) validateAndInsertTargets(tx *gorm.DB, schoolID, homeworkID uint, classYearIDs []uint) error {
 	seen := map[uint]bool{}
 	unique := make([]uint, 0, len(classYearIDs))

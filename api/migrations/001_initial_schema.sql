@@ -146,6 +146,30 @@ CREATE TABLE
 -- CREATE INDEX idx_class_years_deleted_at ON class_years (deleted_at);
 CREATE INDEX idx_class_years_school_active ON class_years (school_id, is_active);
 
+-- teaching_assignments
+-- Records which subjects a teacher teaches to a class_year (the subject-teacher
+-- relationship). Distinct from class_years.class_teacher_id, which is the single
+-- "class teacher" (owner) of a section. A teacher may teach several subjects to
+-- several class_years and need not be the class teacher of any of them.
+CREATE TABLE
+    teaching_assignments (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        teacher_id BIGINT NOT NULL REFERENCES teachers (id) ON DELETE CASCADE,
+        class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE CASCADE,
+        subject VARCHAR(100) NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (teacher_id, class_year_id, subject)
+    );
+
+CREATE INDEX idx_teaching_assignments_school ON teaching_assignments (school_id);
+
+CREATE INDEX idx_teaching_assignments_teacher ON teaching_assignments (teacher_id, is_active);
+
+CREATE INDEX idx_teaching_assignments_class_year ON teaching_assignments (class_year_id);
+
 -- enrollments
 CREATE TABLE
     enrollments (
