@@ -33,6 +33,21 @@ export async function apiFetch(path, { method = 'GET', body, auth = true } = {})
   return data;
 }
 
+// Multipart upload — attaches the Bearer token but lets the browser set the
+// multipart boundary. NEVER set Content-Type on a FormData request, or the
+// boundary is lost and the server can't parse the parts.
+export async function apiUpload(path, formData) {
+  const headers = {};
+  const t = getToken();
+  if (t) headers['Authorization'] = `Bearer ${t}`;
+  const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers, body: formData });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || `Upload failed (${res.status})`);
+  }
+  return data;
+}
+
 // ─── Auth calls ───────────────────────────────────────────────────────────
 // Login: POST /api/login { school_code, username, password }
 //   → { token, user: { id, username, role, school_id, display_name },

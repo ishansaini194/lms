@@ -16,7 +16,7 @@ export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = location.state?.from || '/admin';
+  const from = location.state?.from || '';
 
   const [schoolCode, setSchoolCode] = useState(SCHOOLS[0]?.code || '');
   const [username, setUsername] = useState('');
@@ -32,8 +32,11 @@ export default function Login() {
     }
     setBusy(true);
     try {
-      await login({ school_code: schoolCode, username, password });
-      navigate(from, { replace: true });
+      const u = await login({ school_code: schoolCode, username, password });
+      // Honor an explicit "from" only if it matches the user's portal; else go to their home.
+      const home = u?.role === 'teacher' ? '/teacher' : u?.role === 'student' ? '/portal-coming-soon' : '/admin';
+      const dest = (from && from.startsWith(home)) ? from : home;
+      navigate(dest, { replace: true });
     } catch (e) {
       setError(e.message === 'invalid credentials' ? 'Incorrect school, username, or password.' : e.message);
     } finally {
@@ -125,11 +128,6 @@ export default function Login() {
               {busy ? 'Signing in…' : 'Sign in'}
             </Btn>
           </div>
-        </div>
-
-        {/* Mock-mode hint — remove once backend is wired */}
-        <div style={{ ...hfText.small, color: hf.muted, textAlign: 'center', marginTop: 16, lineHeight: 1.5 }}>
-          Demo login · school <b>KRB</b> · user <b>admin</b> · pass <b>admin123</b>
         </div>
       </div>
     </div>
