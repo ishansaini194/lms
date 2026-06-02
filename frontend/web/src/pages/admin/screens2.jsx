@@ -11,7 +11,7 @@ import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { TeacherFormModal, HA6Modal, ConfirmModal } from '@/pages/admin/extras.jsx';
+import { TeacherFormModal, HA6Modal, ConfirmModal, ManageSubjectsModal } from '@/pages/admin/extras.jsx';
 import { useAuth } from '@/auth/AuthContext';
 // Admin hi-fi · A4 Fees (Collect flow) · A5 Teachers · A6 Notices
 
@@ -822,6 +822,7 @@ const ReceiptPanel = ({ receipt, student, fee, onAnother }) => {
 const HA5 = () => {
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [managing, setManaging] = useState(null); // teacher whose subjects we're managing
   const [deleting, setDeleting] = useState(null);
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
@@ -998,6 +999,9 @@ const HA5 = () => {
               </div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
                 <button onClick={() => setEditing(t)} className="hf-btn" title="Edit" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
+                {t.is_active && (
+                  <button onClick={() => setManaging(t)} className="hf-btn" title="Manage subjects" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.book}</button>
+                )}
                 <button onClick={() => { setResetErr(''); setResetting(t); }} className="hf-btn" title="Reset password" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
                 {t.is_active ? (
                   <button onClick={() => { setDelErr(''); setDeleting(t); }} className="hf-btn" title="Deactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -1074,6 +1078,11 @@ const HA5 = () => {
               </ModalShell>
             </div>
           </div>
+        </div>
+      )}
+      {managing && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ManageSubjectsModal teacher={managing} onClose={() => setManaging(null)} />
         </div>
       )}
     </>

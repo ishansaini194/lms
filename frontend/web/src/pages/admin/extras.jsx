@@ -1432,9 +1432,146 @@ const AStToastDenied = () => (
   </StateFrame>
 );
 
+// ─── Manage subjects modal · teaching assignments for one teacher ──────────
+// Subject-teaching relationship (distinct from the class-teacher role, which is
+// set on the Classes page). Add/remove are immediate API calls — no save-all.
+const ManageSubjectsModal = ({ teacher, onClose }) => {
+  const [assignments, setAssignments] = useState([]);
+  const [classYears, setClassYears] = useState([]);
+  const [ay, setAy] = useState(null); // { id, year_label } | null
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+
+  const [addClassId, setAddClassId] = useState(null);
+  const [addSubject, setAddSubject] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addErr, setAddErr] = useState('');
+  const [removingId, setRemovingId] = useState(null);
+
+  const load = () => {
+    setLoading(true);
+    setLoadErr('');
+    Promise.all([
+      apiFetch(`/api/teaching-assignments?teacher_id=${teacher.id}`),
+      apiFetch('/api/academic-years'),
+    ])
+      .then(async ([asg, years]) => {
+        setAssignments(Array.isArray(asg) ? asg : []);
+        const cur = Array.isArray(years) && years.find((y) => y.is_current);
+        setAy(cur ? { id: cur.id, year_label: cur.year_label } : null);
+        // Picker offers current-AY class-years only.
+        const cys = cur ? await apiFetch(`/api/class-years?academic_year_id=${cur.id}`) : [];
+        setClassYears(Array.isArray(cys) ? cys : []);
+      })
+      .catch((e) => setLoadErr(e.message || 'Failed to load assignments'))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const cyLabel = (cy) => (cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}`);
+  const classOptions = classYears.map((cy) => ({ value: cy.id, label: cyLabel(cy) }));
+  const firstName = (teacher.name || '').split(' ')[0] || 'this teacher';
+
+  const remove = async (id) => {
+    setRemovingId(id);
+    setAddErr('');
+    try {
+      await apiFetch(`/api/teaching-assignments/${id}`, { method: 'DELETE' });
+      setAssignments((list) => list.filter((a) => a.id !== id));
+    } catch (e) {
+      setAddErr(e.message || 'Failed to remove');
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  const add = async () => {
+    setAddErr('');
+    if (!addClassId || !addSubject.trim()) return;
+    setAdding(true);
+    try {
+      const row = await apiFetch('/api/teaching-assignments', {
+        method: 'POST',
+        body: { teacher_id: teacher.id, class_year_id: addClassId, subject: addSubject.trim() },
+      });
+      setAssignments((list) => [...list, row]);
+      setAddClassId(null);
+      setAddSubject('');
+    } catch (e) {
+      // 409 → friendly "already assigned" (the one error an admin actually hits).
+      setAddErr(e.message || 'Failed to add');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  return (
+    <FormModal onClose={onClose}>
+      <ModalShell
+        title={`Manage subjects · ${teacher.name}`}
+        subtitle={`Subjects ${firstName} teaches this year. The class teacher role is set on the Classes page.`}
+        width={540}
+        footer={<Btn variant="primary" size="md" onClick={onClose}>Done</Btn>}
+      >
+        {loading ? (
+          <div style={{ padding: '24px 0', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>
+        ) : loadErr ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '20px 0' }}>
+            <div style={{ ...hfText.small, color: hf.accent }}>{loadErr}</div>
+            <Btn variant="ghost" size="sm" onClick={load}>Retry</Btn>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* Current assignments */}
+            <div>
+              <FieldLabel>Current subjects</FieldLabel>
+              {assignments.length === 0 ? (
+                <div style={{ ...hfText.small, color: hf.muted, padding: '6px 2px' }}>No subjects assigned yet.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {assignments.map((a) => (
+                    <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 9, border: `1px solid ${hf.borderS}`, background: hf.surface2 }}>
+                      <ClassChip cls={a.class_label} />
+                      <span style={{ ...hfText.small, fontWeight: 600, color: hf.ink, flex: 1, minWidth: 0 }}>{a.subject}</span>
+                      <button onClick={() => remove(a.id)} disabled={removingId === a.id} className="hf-btn" title="Remove" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Add row */}
+            <div style={{ borderTop: `1px solid ${hf.borderS}`, paddingTop: 14 }}>
+              <FieldLabel>Add a subject{ay?.year_label ? ` · ${ay.year_label}` : ''}</FieldLabel>
+              {!ay ? (
+                <div style={{ ...hfText.small, color: hf.muted }}>No current academic year set — set one first.</div>
+              ) : (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <div style={{ flex: 1 }}>
+                    <SearchableSelect value={addClassId} onChange={(v) => setAddClassId(v)} options={classOptions} placeholder="Pick a class…" />
+                  </div>
+                  <div style={{ width: 150 }}>
+                    <FInput value={addSubject} onChange={setAddSubject} placeholder="Subject" />
+                  </div>
+                  <Btn variant="primary" size="md" onClick={add} disabled={adding || !addClassId || !addSubject.trim()}>{adding ? '…' : 'Add'}</Btn>
+                </div>
+              )}
+              {addErr && (
+                <div style={{ marginTop: 10, ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{addErr}</div>
+              )}
+            </div>
+          </div>
+        )}
+      </ModalShell>
+    </FormModal>
+  );
+};
+
 export {
   StudentFormModal, TeacherFormModal, ClassFormModal, AcademicYearFormModal,
-  ClassYearSetupModal, AssignTeacherModal,
+  ClassYearSetupModal, AssignTeacherModal, ManageSubjectsModal,
   HA5Modal, HA6Modal, HA7Modal, ConfirmModal,
   AStLoading, AStEmpty, AStError, AStConfirm, AStToastDenied,
 };
