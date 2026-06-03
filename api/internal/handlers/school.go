@@ -37,6 +37,27 @@ func schoolProfile(s models.School) fiber.Map {
 	}
 }
 
+// ListPublic — GET /api/schools. Public, unauthenticated endpoint used by the
+// login page to populate the school dropdown. Returns ONLY id/code/name, never
+// any sensitive column (address, phone, email, logo, receipt config, …).
+func (h *SchoolHandler) ListPublic(c *fiber.Ctx) error {
+	type publicSchool struct {
+		ID   uint   `json:"id"`
+		Code string `json:"code"`
+		Name string `json:"name"`
+	}
+
+	var schools []publicSchool
+	if err := h.DB.Model(&models.School{}).
+		Select("id", "code", "name").
+		Order("name ASC").
+		Find(&schools).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to load schools"})
+	}
+
+	return c.JSON(schools)
+}
+
 var validReceiptReset = map[string]bool{"yearly": true, "monthly": true, "never": true}
 
 // GET /api/school — the current school's full profile.

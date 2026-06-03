@@ -1,16 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import { Btn } from '@/components/ui/primitives';
 import { FInput } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
-
-// School options — for now a small list; later this comes from the subdomain
-// or a GET /api/schools lookup. Matches the school_code the backend expects.
-const SCHOOLS = [
-  { code: 'krb', name: 'Kendriya Riverside (KRB)' },
-];
+import { apiFetch } from '@/lib/api';
 
 export default function Login() {
   const { login } = useAuth();
@@ -18,11 +13,32 @@ export default function Login() {
   const location = useLocation();
   const from = location.state?.from || '';
 
-  const [schoolCode, setSchoolCode] = useState(SCHOOLS[0]?.code || '');
+  const [schools, setSchools] = useState([]);
+  const [schoolsLoading, setSchoolsLoading] = useState(true);
+  const [schoolCode, setSchoolCode] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+
+  // Load the school list from the backend (public endpoint). The dropdown is
+  // populated from the DB so adding a school needs no code change.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await apiFetch('/api/schools', { auth: false });
+        if (cancelled) return;
+        setSchools(Array.isArray(list) ? list : []);
+        if (Array.isArray(list) && list.length > 0) setSchoolCode(list[0].code);
+      } catch (e) {
+        if (!cancelled) setError('Could not load schools. Please try again or enter your details.');
+      } finally {
+        if (!cancelled) setSchoolsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const submit = async () => {
     setError('');
@@ -60,7 +76,7 @@ export default function Login() {
             background: `linear-gradient(135deg, ${hf.primary}, oklch(0.55 0.16 290))`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             color: '#fff', fontWeight: 700, fontSize: 15, letterSpacing: '-0.02em',
-          }}>KR</div>
+          }}>SM</div>
           <div>
             <div style={{ ...hfText.h2 }}>StudyMe</div>
             <div style={{ ...hfText.small, color: hf.muted, marginTop: -2 }}>School management</div>
@@ -83,6 +99,7 @@ export default function Login() {
               <select
                 value={schoolCode}
                 onChange={(e) => setSchoolCode(e.target.value)}
+                disabled={schoolsLoading}
                 style={{
                   width: '100%', padding: '10px 12px', background: hf.surface,
                   border: `1px solid ${hf.border}`, borderRadius: 9,
@@ -90,7 +107,13 @@ export default function Login() {
                   appearance: 'none', cursor: 'pointer', outline: 'none',
                 }}
               >
-                {SCHOOLS.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)}
+                {schoolsLoading ? (
+                  <option value="">Loading schools…</option>
+                ) : schools.length === 0 ? (
+                  <option value="">No schools available</option>
+                ) : (
+                  schools.map((s) => <option key={s.code} value={s.code}>{s.name}</option>)
+                )}
               </select>
             </div>
 

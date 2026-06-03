@@ -68,6 +68,10 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 
 	api.Post("/login", loginLimiter, authHandler.Login)
 
+	// Public school list for the login dropdown — no auth. Exposes only
+	// id/code/name (see SchoolHandler.ListPublic).
+	api.Get("/schools", handlers.NewSchoolHandler(db).ListPublic)
+
 	// ---------- Authenticated routes (any role) ----------
 	authGroup := api.Group("/auth", middleware.AuthRequired())
 	authGroup.Post("/change-password", authHandler.ChangePassword)
