@@ -306,6 +306,28 @@ CREATE TABLE
 
 CREATE INDEX idx_homework_targets_class ON homework_targets (class_year_id);
 
+-- exam_terms
+-- A school-wide exam term (e.g. Mid-Term, Final, Unit Test 1) tied to an academic
+-- year. Groups the per-class subject-exams that sit under it; those exams stay
+-- per class_year with their own subject/max_marks/teacher/date. Declared before
+-- `exams` so the exams.exam_term_id foreign key below resolves.
+CREATE TABLE
+    exam_terms (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        academic_year_id BIGINT NOT NULL REFERENCES academic_years (id) ON DELETE RESTRICT,
+        name VARCHAR(100) NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (school_id, academic_year_id, name)
+    );
+
+CREATE INDEX idx_exam_terms_school ON exam_terms (school_id);
+
+CREATE INDEX idx_exam_terms_year ON exam_terms (school_id, academic_year_id);
+
 -- exams
 CREATE TABLE
     exams (
@@ -313,6 +335,7 @@ CREATE TABLE
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE RESTRICT,
         teacher_id BIGINT REFERENCES teachers (id) ON DELETE SET NULL,
+        exam_term_id BIGINT REFERENCES exam_terms (id) ON DELETE RESTRICT,
         name VARCHAR(100) NOT NULL,
         subject VARCHAR(100) NOT NULL,
         max_marks INTEGER NOT NULL,
@@ -328,6 +351,8 @@ CREATE INDEX idx_exams_school ON exams (school_id);
 CREATE INDEX idx_exams_school_active ON exams (school_id, is_active);
 
 CREATE INDEX idx_exams_class_year ON exams (class_year_id);
+
+CREATE INDEX idx_exams_exam_term ON exams (exam_term_id);
 
 -- results
 CREATE TABLE

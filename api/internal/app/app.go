@@ -169,6 +169,16 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	homeworks.Put("/:id", homeworksHandler.Update)
 	homeworks.Delete("/:id", homeworksHandler.Delete)
 
+	// Exam Terms (school-wide terms that group subject-exams). Admin-only for now;
+	// teachers get exam-term-aware exam creation in a later stage.
+	examTermsHandler := handlers.NewExamTermsHandler(db)
+
+	examTerms := api.Group("/exam-terms", middleware.AuthRequired(), middleware.RequireRole("admin"))
+	examTerms.Get("/", examTermsHandler.List)
+	examTerms.Post("/", examTermsHandler.Create)
+	examTerms.Put("/:id", examTermsHandler.Update)
+	examTerms.Delete("/:id", examTermsHandler.Delete)
+
 	// Exams
 	examsHandler := handlers.NewExamsHandler(db)
 

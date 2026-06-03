@@ -1569,9 +1569,148 @@ const ManageSubjectsModal = ({ teacher, onClose }) => {
   );
 };
 
+// ─── A9 modal · Promote students (bulk, year-end) ─────────────────────────
+// Wires POST /api/enrollments/promote. Three steps: pick the source + target
+// class-years, then an explicit confirm before the (bulk, significant) request
+// fires, then a result summary. Backend marks each source enrollment 'promoted'
+// and creates a new active enrollment in the target; students already in the
+// target are skipped (idempotent).
+const ErrBox = ({ children }) => (
+  <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{children}</div>
+);
+
+const cyOptionLabel = (cy) => {
+  const cls = cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}`;
+  const yr = cy.academic_year ? cy.academic_year.year_label : '';
+  return `${cls}${yr ? ' · ' + yr : ''}`;
+};
+
+const PromoteStudentsModal = ({ onClose, onSaved }) => {
+  const [classYears, setClassYears] = useState([]);
+  const [loadErr, setLoadErr] = useState('');
+  const [fromId, setFromId] = useState(null);
+  const [toId, setToId] = useState(null);
+  const [step, setStep] = useState('select'); // 'select' | 'confirm' | 'done'
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    apiFetch('/api/class-years')
+      .then((data) => setClassYears(Array.isArray(data) ? data : []))
+      .catch((e) => setLoadErr(e.message || 'Failed to load class-years'));
+  }, []);
+
+  const options = classYears.map((cy) => ({ value: cy.id, label: cyOptionLabel(cy) }));
+  // A student can't be promoted into the same class-year — keep the lists disjoint.
+  const fromOptions = options.filter((o) => o.value !== toId);
+  const toOptions = options.filter((o) => o.value !== fromId);
+  const labelOf = (id) => options.find((o) => o.value === id)?.label || '—';
+
+  const goConfirm = () => {
+    setErr('');
+    if (!fromId) { setErr('Pick the class-year to promote from.'); return; }
+    if (!toId) { setErr('Pick the class-year to promote into.'); return; }
+    if (fromId === toId) { setErr('The from and to class-years must be different.'); return; }
+    setStep('confirm');
+  };
+
+  const doPromote = async () => {
+    setErr('');
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/enrollments/promote', {
+        method: 'POST',
+        body: { from_class_year_id: Number(fromId), to_class_year_id: Number(toId) },
+      });
+      setResult(res);
+      setStep('done');
+      onSaved?.();
+    } catch (e) {
+      // Stay on the confirm step so the backend message is visible with a retry.
+      setErr(e.message || 'Promotion failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let inner;
+  if (step === 'done') {
+    const promoted = result?.promoted_count ?? 0;
+    const skipped = result?.skipped_count ?? 0;
+    inner = (
+      <ModalShell
+        title="Promotion complete"
+        width={440}
+        footer={<Btn variant="primary" size="md" onClick={onClose}>Done</Btn>}
+      >
+        <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.7 }}>
+          Promoted <b>{promoted}</b> student{promoted === 1 ? '' : 's'} from <b>{labelOf(fromId)}</b> to <b>{labelOf(toId)}</b>.
+          {skipped > 0 && <> {' '}<b>{skipped}</b> student{skipped === 1 ? ' was' : 's were'} already enrolled in the target and skipped.</>}
+        </div>
+      </ModalShell>
+    );
+  } else if (step === 'confirm') {
+    inner = (
+      <ModalShell
+        title="Promote all active students?"
+        width={440}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={() => { setErr(''); setStep('select'); }} disabled={busy}>Back</Btn>
+          <Btn variant="accent" size="md" onClick={doPromote} disabled={busy}>{busy ? 'Promoting…' : 'Yes, promote'}</Btn>
+        </>}
+      >
+        <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+          This promotes <b>all active students</b> from <b>{labelOf(fromId)}</b> to <b>{labelOf(toId)}</b>.
+          Each source enrollment is marked <b>promoted</b> and a new active enrollment is created in the
+          target class-year. Students already enrolled in the target are skipped. This affects the whole class.
+        </div>
+        {err && <div style={{ marginTop: 12 }}><ErrBox>{err}</ErrBox></div>}
+      </ModalShell>
+    );
+  } else {
+    inner = (
+      <ModalShell
+        title="Promote students"
+        subtitle="Move all active students from one class-year to the next"
+        width={480}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={goConfirm} disabled={!classYears.length}>Continue</Btn>
+        </>}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div>
+            <FieldLabel required>Promote from</FieldLabel>
+            <SearchableSelect
+              value={fromId}
+              onChange={(v) => setFromId(v)}
+              options={fromOptions}
+              placeholder="Source class-year (e.g. 1-A · 2026-27)…"
+            />
+          </div>
+          <div>
+            <FieldLabel required>Promote to</FieldLabel>
+            <SearchableSelect
+              value={toId}
+              onChange={(v) => setToId(v)}
+              options={toOptions}
+              placeholder="Destination class-year (e.g. 2-A · 2027-28)…"
+            />
+          </div>
+          {loadErr && <ErrBox>{loadErr}</ErrBox>}
+          {err && <ErrBox>{err}</ErrBox>}
+        </div>
+      </ModalShell>
+    );
+  }
+
+  return <FormModal onClose={onClose}>{inner}</FormModal>;
+};
+
 export {
   StudentFormModal, TeacherFormModal, ClassFormModal, AcademicYearFormModal,
   ClassYearSetupModal, AssignTeacherModal, ManageSubjectsModal,
-  HA5Modal, HA6Modal, HA7Modal, ConfirmModal,
+  HA5Modal, HA6Modal, HA7Modal, ConfirmModal, PromoteStudentsModal,
   AStLoading, AStEmpty, AStError, AStConfirm, AStToastDenied,
 };

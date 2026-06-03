@@ -17,7 +17,7 @@ import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Dropdown,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { HA7Modal, AcademicYearFormModal, ConfirmModal } from '@/pages/admin/extras.jsx';
+import { HA7Modal, AcademicYearFormModal, ConfirmModal, PromoteStudentsModal } from '@/pages/admin/extras.jsx';
 import { useAuth } from '@/auth/AuthContext';
 import {
   reportTerms,
@@ -1191,6 +1191,7 @@ const FeePlansPanel = ({ academicYearId, yearLabel }) => {
 const HA9 = () => {
   const [tab, setTab] = useState('years');
   const [yearModal, setYearModal] = useState(null); // null | 'create' | initial-object
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const [years, setYears] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -1311,7 +1312,7 @@ const HA9 = () => {
           </div>
           <div style={{ display: 'flex', gap: 8 }}>
             {current && <Btn variant="outline" size="md" onClick={() => setYearModal(current)}>Edit dates</Btn>}
-            <Btn variant="primary" size="md" icon={I.arrUp}>Promote students</Btn>
+            <Btn variant="primary" size="md" icon={I.arrUp} onClick={() => setPromoteOpen(true)}>Promote students</Btn>
           </div>
         </div>
       </Card>
@@ -1373,12 +1374,14 @@ const HA9 = () => {
               color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
             }}>{I.alert}</div>
             <div>
-              <div style={{ ...hfText.h2, fontSize: 15 }}>Promoting students is destructive</div>
+              <div style={{ ...hfText.h2, fontSize: 15 }}>Promoting students is significant</div>
               <div style={{ ...hfText.small, color: hf.ink2, marginTop: 6, lineHeight: 1.55 }}>
-                It moves <b>all 482 active enrollments</b> up one class, marks the current year archived, and locks marks entry. <b>Class 8 students</b> are marked passed-out.
+                It moves <b>all active students</b> from one class-year into another in bulk — each source
+                enrollment is marked <b>promoted</b> and a new active enrollment is created in the target.
+                The destination class-year must already exist.
               </div>
               <div style={{ marginTop: 10 }}>
-                <Btn variant="outline" size="sm">See impact preview</Btn>
+                <Btn variant="outline" size="sm" onClick={() => setPromoteOpen(true)}>Promote students</Btn>
               </div>
             </div>
           </div>
@@ -1424,6 +1427,14 @@ const HA9 = () => {
           initial={yearModal === 'create' ? null : yearModal}
           onClose={() => setYearModal(null)}
           onSaved={() => { setYearModal(null); loadYears(); }}
+        />
+      </div>
+    )}
+    {promoteOpen && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+        <PromoteStudentsModal
+          onClose={() => setPromoteOpen(false)}
+          onSaved={() => { loadYears(); showToast('Students promoted'); }}
         />
       </div>
     )}

@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    volumes:
+      - studyme_pgdata:/var/lib/postgresql/data
+    ports:
+      # Host-localhost only: reachable via SSH tunnel, never public.
+      - "127.0.0.1:5433:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./repo/api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    ports:
+      # Localhost only — nginx proxies to this; never publicly exposed.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # Persistent uploads: host dir -> container path the app writes to.
+      - ./uploads/library:/app/uploads/library
+    healthcheck:
+      # BusyBox wget (present in alpine) — correct path is /api/health
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:8080/api/health" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  studyme_pgdata:

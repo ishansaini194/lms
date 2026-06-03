@@ -18,12 +18,18 @@ import { TeacherMarksList, TeacherMarksGrid } from '@/pages/teacher/TeacherMarks
 import TeacherNotices from '@/pages/teacher/TeacherNotices.jsx';
 import TeacherProfile from '@/pages/teacher/TeacherProfile.jsx';
 import TeacherLibrary from '@/pages/teacher/TeacherLibrary.jsx';
-import PortalComingSoon from '@/pages/PortalComingSoon.jsx';
+
+// Student / parent portal.
+import StudentDashboard from '@/pages/student/StudentDashboard.jsx';
+import StudentHomework from '@/pages/student/StudentHomework.jsx';
+import StudentNotices from '@/pages/student/StudentNotices.jsx';
+import StudentResults from '@/pages/student/StudentResults.jsx';
+import StudentProfile from '@/pages/student/StudentProfile.jsx';
 
 // Where each role lands after login / when hitting a route they shouldn't.
 function homeFor(role) {
   if (role === 'teacher') return '/teacher';
-  if (role === 'student') return '/portal-coming-soon';
+  if (role === 'student') return '/student';
   return '/admin'; // admin and any unknown role
 }
 
@@ -76,8 +82,12 @@ function AppRoutes() {
       <Route path="/teacher/profile" element={<ProtectedRoute role="teacher"><TeacherProfile /></ProtectedRoute>} />
       <Route path="/teacher/library" element={<ProtectedRoute role="teacher"><TeacherLibrary /></ProtectedRoute>} />
 
-      {/* Student stub — any authenticated user can see it */}
-      <Route path="/portal-coming-soon" element={<ProtectedRoute><PortalComingSoon /></ProtectedRoute>} />
+      {/* Student / parent portal — gated behind auth + student role */}
+      <Route path="/student" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
+      <Route path="/student/homework" element={<ProtectedRoute role="student"><StudentHomework /></ProtectedRoute>} />
+      <Route path="/student/notices" element={<ProtectedRoute role="student"><StudentNotices /></ProtectedRoute>} />
+      <Route path="/student/results" element={<ProtectedRoute role="student"><StudentResults /></ProtectedRoute>} />
+      <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentProfile /></ProtectedRoute>} />
 
       <Route path="/" element={<RoleHome />} />
       <Route path="*" element={<RoleHome />} />

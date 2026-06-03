@@ -50,7 +50,7 @@ export default function Login() {
     try {
       const u = await login({ school_code: schoolCode, username, password });
       // Honor an explicit "from" only if it matches the user's portal; else go to their home.
-      const home = u?.role === 'teacher' ? '/teacher' : u?.role === 'student' ? '/portal-coming-soon' : '/admin';
+      const home = u?.role === 'teacher' ? '/teacher' : u?.role === 'student' ? '/student' : '/admin';
       const dest = (from && from.startsWith(home)) ? from : home;
       navigate(dest, { replace: true });
     } catch (e) {

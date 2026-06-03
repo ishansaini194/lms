@@ -24,6 +24,7 @@ func NewExamsHandler(db *gorm.DB) *ExamsHandler {
 
 type CreateExamRequest struct {
 	ClassYearID uint       `json:"class_year_id"`
+	ExamTermID  uint       `json:"exam_term_id"`
 	TeacherID   *uint      `json:"teacher_id,omitempty"`
 	Name        string     `json:"name"`
 	Subject     string     `json:"subject"`
@@ -55,6 +56,7 @@ type examListItem struct {
 	ClassYearLabel string  `json:"class_year_label"` // "2-A · 2026-27"
 	ClassLabel     string  `json:"class_label"`      // "2-A"
 	TeacherName    *string `json:"teacher_name"`     // nil if unassigned
+	ExamTermName   *string `json:"exam_term_name"`   // nil if no term (legacy exams)
 }
 
 // enrichExams attaches class/teacher labels via two batched queries (no N+1).
@@ -70,10 +72,14 @@ func (h *ExamsHandler) enrichExams(schoolID uint, exams []models.Exam) []examLis
 
 	cyIDs := make([]uint, 0, len(exams))
 	teacherIDs := make([]uint, 0, len(exams))
+	termIDs := make([]uint, 0, len(exams))
 	for _, e := range exams {
 		cyIDs = append(cyIDs, e.ClassYearID)
 		if e.TeacherID != nil {
 			teacherIDs = append(teacherIDs, *e.TeacherID)
+		}
+		if e.ExamTermID != 0 {
+			termIDs = append(termIDs, e.ExamTermID)
 		}
 	}
 
@@ -118,6 +124,23 @@ func (h *ExamsHandler) enrichExams(schoolID uint, exams []models.Exam) []examLis
 		}
 	}
 
+	// exam_term → name.
+	termByID := map[uint]string{}
+	if len(termIDs) > 0 {
+		type termRow struct {
+			ID   uint
+			Name string
+		}
+		var termRows []termRow
+		h.DB.Table("exam_terms").
+			Select("id, name").
+			Where("school_id = ? AND id IN ?", schoolID, termIDs).
+			Scan(&termRows)
+		for _, t := range termRows {
+			termByID[t.ID] = t.Name
+		}
+	}
+
 	for i := range items {
 		if l, ok := byCY[items[i].ClassYearID]; ok {
 			items[i].ClassLabel = l.classLabel
@@ -130,6 +153,12 @@ func (h *ExamsHandler) enrichExams(schoolID uint, exams []models.Exam) []examLis
 			if name, ok := teacherByID[*items[i].TeacherID]; ok {
 				n := name
 				items[i].TeacherName = &n
+			}
+		}
+		if items[i].ExamTermID != 0 {
+			if name, ok := termByID[items[i].ExamTermID]; ok {
+				n := name
+				items[i].ExamTermName = &n
 			}
 		}
 	}
@@ -146,6 +175,8 @@ func (h *ExamsHandler) List(c *fiber.Ctx) error {
 
 	teacherID := c.QueryInt("teacher_id", 0)
 
+	examTermID := c.QueryInt("exam_term_id", 0)
+
 	query := h.DB.Model(&models.Exam{}).Where("school_id = ?", schoolID)
 
 	if isTeacher(c) {
@@ -159,6 +190,9 @@ func (h *ExamsHandler) List(c *fiber.Ctx) error {
 	}
 	if teacherID > 0 {
 		query = query.Where("teacher_id = ?", teacherID)
+	}
+	if examTermID > 0 {
+		query = query.Where("exam_term_id = ?", examTermID)
 	}
 
 	var exams []models.Exam
@@ -218,10 +252,31 @@ func (h *ExamsHandler) Create(c *fiber.Ctx) error {
 	if body.MaxMarks <= 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "max_marks must be greater than zero"})
 	}
+	if body.ExamTermID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "exam_term_id is required"})
+	}
 
 	// class_year belongs to school
 	if err := h.validateClassYear(body.ClassYearID, schoolID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "class_year not found in this school"})
+	}
+
+	// exam_term belongs to this school, is active, and shares the class-year's
+	// academic year (a term groups exams within one year).
+	cyYearID, err := h.classYearAcademicYearID(body.ClassYearID, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	var term models.ExamTerm
+	if err := h.DB.Where("id = ? AND school_id = ? AND is_active = ?", body.ExamTermID, schoolID, true).
+		First(&term).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "exam_term not found in this school"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if term.AcademicYearID != cyYearID {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "exam_term belongs to a different academic year than the class"})
 	}
 
 	if isTeacher(c) {
@@ -243,6 +298,7 @@ func (h *ExamsHandler) Create(c *fiber.Ctx) error {
 	exam := models.Exam{
 		SchoolID:    schoolID,
 		ClassYearID: body.ClassYearID,
+		ExamTermID:  body.ExamTermID,
 		TeacherID:   body.TeacherID,
 		Name:        body.Name,
 		Subject:     body.Subject,
@@ -564,6 +620,18 @@ func (h *ExamsHandler) validateClassYear(classYearID, schoolID uint) error {
 		return errors.New("class_year not found")
 	}
 	return nil
+}
+
+// classYearAcademicYearID returns the academic_year_id of a school's class_year.
+// Used to confirm an exam's term belongs to the same academic year as its class.
+func (h *ExamsHandler) classYearAcademicYearID(classYearID, schoolID uint) (uint, error) {
+	var yearID uint
+	if err := h.DB.Model(&models.ClassYear{}).
+		Where("id = ? AND school_id = ?", classYearID, schoolID).
+		Pluck("academic_year_id", &yearID).Error; err != nil {
+		return 0, err
+	}
+	return yearID, nil
 }
 
 func (h *ExamsHandler) validateTeacher(teacherID, schoolID uint) error {
