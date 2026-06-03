@@ -1,0 +1,10 @@
+# Goes at repo/api/.dockerignore
+.git
+.gitignore
+.env
+.env.*
+*.md
+uploads/
+tmp/
+bin/
+*.log
