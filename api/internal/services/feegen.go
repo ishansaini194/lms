@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"time"
 
 	"github.com/ishansaini194/lms/api/internal/models"
@@ -8,6 +9,10 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+// ErrEnrollmentInactive is returned when a per-student generation targets an
+// enrollment that exists in the school but is not active.
+var ErrEnrollmentInactive = errors.New("enrollment is not active")
 
 // Result reports what a generation run did.
 type Result struct {
@@ -59,6 +64,60 @@ func GenerateForMonth(db *gorm.DB, schoolID, academicYearID uint, month int) (*R
 				if err := upsertFee(tx, res, schoolID, enr.ID, "transport", month, cy.TransportFee, dueDate); err != nil {
 					return err
 				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+// GenerateForEnrollmentMonths creates tuition + transport fees for ONE active
+// enrollment across the given months. It reuses the exact same fee-creation
+// logic as GenerateForMonth (upsertFee + dueOn10thNextMonth): amounts come from
+// the enrollment's class_year standard fees, due dates are the 10th of the
+// following month. Idempotent — months that already have a fee are skipped.
+//
+// months must be 1-12. Returns gorm.ErrRecordNotFound if the enrollment isn't
+// found in this school, or ErrEnrollmentInactive if it exists but isn't active.
+func GenerateForEnrollmentMonths(db *gorm.DB, schoolID, academicYearID, enrollmentID uint, months []int) (*Result, error) {
+	res := &Result{}
+
+	// Academic year — for due-date year calc + tenancy.
+	var ay models.AcademicYear
+	if err := db.Where("id = ? AND school_id = ?", academicYearID, schoolID).First(&ay).Error; err != nil {
+		return nil, err
+	}
+
+	// Enrollment must exist in this school. Preload its class_year for the fee rates.
+	var enr models.Enrollment
+	if err := db.Where("id = ? AND school_id = ?", enrollmentID, schoolID).
+		Preload("ClassYear").
+		First(&enr).Error; err != nil {
+		return nil, err
+	}
+	if enr.Status != "active" {
+		return nil, ErrEnrollmentInactive
+	}
+	// Defensive: the class_year must belong to the same school and academic year.
+	if enr.ClassYear.SchoolID != schoolID || enr.ClassYear.AcademicYearID != academicYearID {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	cy := enr.ClassYear
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		for _, month := range months {
+			dueDate := dueOn10thNextMonth(month, ay.StartDate)
+			// tuition
+			if err := upsertFee(tx, res, schoolID, enr.ID, "tuition", month, cy.TuitionFee, dueDate); err != nil {
+				return err
+			}
+			// transport
+			if err := upsertFee(tx, res, schoolID, enr.ID, "transport", month, cy.TransportFee, dueDate); err != nil {
+				return err
 			}
 		}
 		return nil

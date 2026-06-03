@@ -1033,6 +1033,161 @@ const AdminUsersPanel = () => {
   );
 };
 
+// ─── Fee plans (Settings → Fee plans) ────────────────────────────────────
+// Per-class monthly tuition + transport fees for the current academic year.
+// Reads GET /api/class-years; edits via PUT /api/class-years/:id.
+
+const FEES_GRID = '130px 1fr 1fr 90px';
+
+// Money rule: fees travel as decimal strings, never floats. We validate the
+// raw string (non-negative, up to 2 decimals) and send it through untouched.
+const isValidFee = (v) => /^\d+(\.\d{1,2})?$/.test(String(v).trim());
+
+const FeePlanModal = ({ initial, onClose, onSaved }) => {
+  const [tuition, setTuition] = useState(String(initial.tuition_fee ?? ''));
+  const [transport, setTransport] = useState(String(initial.transport_fee ?? ''));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const classLabel = `${initial.class?.name ?? '—'}-${initial.class?.section ?? ''}`;
+
+  const handleSave = async () => {
+    setErr('');
+    if (!isValidFee(tuition)) { setErr('Tuition fee must be a non-negative number (up to 2 decimals).'); return; }
+    if (!isValidFee(transport)) { setErr('Transport fee must be a non-negative number (up to 2 decimals).'); return; }
+    setSaving(true);
+    try {
+      await apiFetch(`/api/class-years/${initial.id}`, {
+        method: 'PUT',
+        body: { tuition_fee: tuition.trim(), transport_fee: transport.trim() },
+      });
+      onSaved?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+          <ModalShell
+            title={`Edit fee plan · Class ${classLabel}`}
+            subtitle="Monthly tuition and transport fees for this class"
+            width={440}
+            footer={<>
+              <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+              <Btn variant="primary" size="md" onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : 'Save changes'}
+              </Btn>
+            </>}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div>
+                <FieldLabel required>Tuition fee (₹)</FieldLabel>
+                <FInput value={tuition} onChange={setTuition} placeholder="800.00" />
+              </div>
+              <div>
+                <FieldLabel required>Transport fee (₹)</FieldLabel>
+                <FInput value={transport} onChange={setTransport} placeholder="0.00" />
+              </div>
+              {err && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
+              )}
+            </div>
+          </ModalShell>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const FeePlansPanel = ({ academicYearId, yearLabel }) => {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [editing, setEditing] = useState(null);
+
+  const load = () => {
+    if (!academicYearId) { setRows([]); setError(null); setLoading(false); return; }
+    setLoading(true);
+    apiFetch(`/api/class-years?academic_year_id=${academicYearId}`)
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        // Sorted by class sort order (e.g. 1-A before 2-B).
+        list.sort((a, b) => (a.class?.sort_order ?? 0) - (b.class?.sort_order ?? 0));
+        setRows(list);
+        setError(null);
+      })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [academicYearId]);
+
+  return (
+    <>
+      <Card padding={0}>
+        <PanelHead
+          title="Fee plans"
+          subtitle={yearLabel ? `Monthly tuition & transport fees per class · ${yearLabel}` : 'Monthly tuition & transport fees per class'}
+        />
+
+        <div style={{
+          display: 'grid', gridTemplateColumns: FEES_GRID,
+          padding: '11px 20px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+          ...hfText.micro, fontSize: 10,
+        }}>
+          <div>Class</div><div>Tuition fee</div><div>Transport fee</div><div style={{ textAlign: 'right' }}>Actions</div>
+        </div>
+
+        {!academicYearId && (
+          <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Set a current academic year first — fee plans are per year.</div>
+        )}
+        {academicYearId && loading && (
+          <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading fee plans…</div>
+        )}
+        {academicYearId && error && !loading && (
+          <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load fee plans: {error}</div>
+        )}
+        {academicYearId && !loading && !error && rows.length === 0 && (
+          <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No classes configured for this year yet.</div>
+        )}
+
+        {academicYearId && !loading && !error && rows.map((cy, i) => (
+          <div key={cy.id} className="hf-row" style={{
+            display: 'grid', gridTemplateColumns: FEES_GRID,
+            padding: '12px 20px', alignItems: 'center',
+            borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
+          }}>
+            <div style={{ ...hfText.num, fontSize: 13, fontWeight: 700 }}>{cy.class?.name}-{cy.class?.section}</div>
+            <div style={{ ...hfText.num, fontSize: 13, color: hf.ink2 }}>₹{cy.tuition_fee}</div>
+            <div style={{ ...hfText.num, fontSize: 13, color: hf.ink2 }}>₹{cy.transport_fee}</div>
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+              <button onClick={() => setEditing(cy)} className="hf-btn" title="Edit fees" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
+            </div>
+          </div>
+        ))}
+
+        {academicYearId && !loading && !error && rows.length > 0 && (
+          <div style={{ padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, ...hfText.small, color: hf.muted }}>
+            {rows.length} class{rows.length === 1 ? '' : 'es'} · fees are charged monthly per enrolled student.
+          </div>
+        )}
+      </Card>
+
+      {editing && (
+        <FeePlanModal
+          initial={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load(); }}
+        />
+      )}
+    </>
+  );
+};
+
 const HA9 = () => {
   const [tab, setTab] = useState('years');
   const [yearModal, setYearModal] = useState(null); // null | 'create' | initial-object
@@ -1128,12 +1283,7 @@ const HA9 = () => {
             </Card>
       )}
 
-      {tab === 'fees' && (
-        <Card padding={48} style={{ textAlign: 'center' }}>
-          <div style={{ ...hfText.h2, color: hf.ink2, marginBottom: 6 }}>Coming soon</div>
-          <div style={{ ...hfText.small, color: hf.muted }}>This settings section isn't built yet.</div>
-        </Card>
-      )}
+      {tab === 'fees' && <FeePlansPanel academicYearId={current?.id} yearLabel={current?.year_label} />}
 
       {tab === 'users' && <AdminUsersPanel />}
 

@@ -588,17 +588,44 @@ func (h *FeesHandler) Generate(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 
 	var body struct {
-		Month          int  `json:"month"`
-		AcademicYearID uint `json:"academic_year_id"`
+		Month          int   `json:"month"`
+		AcademicYearID uint  `json:"academic_year_id"`
+		EnrollmentID   uint  `json:"enrollment_id"` // optional — per-student path
+		Months         []int `json:"months"`        // optional — per-student path
 	}
 	if err := c.BodyParser(&body); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
-	if body.Month < 1 || body.Month > 12 {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "month must be between 1 and 12"})
-	}
 	if body.AcademicYearID == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "academic_year_id is required"})
+	}
+
+	// Per-student path: generate for one enrollment across the given months.
+	if body.EnrollmentID != 0 {
+		if len(body.Months) == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "months is required"})
+		}
+		for _, m := range body.Months {
+			if m < 1 || m > 12 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "each month must be between 1 and 12"})
+			}
+		}
+		res, err := feegen.GenerateForEnrollmentMonths(h.DB, schoolID, body.AcademicYearID, body.EnrollmentID, body.Months)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "enrollment not found in this school"})
+			}
+			if errors.Is(err, feegen.ErrEnrollmentInactive) {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "enrollment is not active"})
+			}
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "generation failed"})
+		}
+		return c.JSON(res)
+	}
+
+	// Whole-school path (unchanged): single month for all active enrollments.
+	if body.Month < 1 || body.Month > 12 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "month must be between 1 and 12"})
 	}
 
 	res, err := feegen.GenerateForMonth(h.DB, schoolID, body.AcademicYearID, body.Month)

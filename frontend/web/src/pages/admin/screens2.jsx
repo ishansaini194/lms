@@ -5,7 +5,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame, SearchInput, FilterSelect,
+  ModalShell, StateFrame, SearchInput, FilterSelect, FInput, FSelect,
 } from '@/components/ui/primitives';
 import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip,
@@ -42,11 +42,121 @@ const StepHead = ({ n, title, right }) => (
 // Maps lowercase URL ?tab= values to the capitalized Tab ids.
 const FEE_TAB_IDS = { collect: 'Collect', pending: 'Pending', recent: 'Recent', history: 'History' };
 
+// Month dropdown options — Jan=1 … Dec=12, matching monthName() used elsewhere.
+const MONTH_OPTS = MONTHS.map((m, i) => ({ value: String(i + 1), label: m }));
+
+// ─── Generate Fees modal ──────────────────────────────────────────────────
+// Triggers POST /api/fees/generate for the current academic year. Safe to
+// re-run — the backend skips fees that already exist (unique on
+// enrollment_id + fee_type + month). Response shape: { created, skipped, zero }.
+const GenerateFeesModal = ({ onClose }) => {
+  const [year, setYear] = useState(null);          // current academic year object
+  const [yearLoading, setYearLoading] = useState(true);
+  const [yearErr, setYearErr] = useState('');
+  const [month, setMonth] = useState(String(new Date().getMonth() + 1));
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [result, setResult] = useState(null);      // { scope, created, skipped, zero }
+
+  // Source the current year the same way the Fee Plans tab does.
+  useEffect(() => {
+    apiFetch('/api/academic-years')
+      .then((data) => {
+        const list = Array.isArray(data) ? data : [];
+        setYear(list.find((y) => y.is_current) || null);
+      })
+      .catch((e) => setYearErr(e.message))
+      .finally(() => setYearLoading(false));
+  }, []);
+
+  const generateMonth = (m) => apiFetch('/api/fees/generate', {
+    method: 'POST',
+    body: { month: m, academic_year_id: year.id },
+  });
+
+  const handleMonth = async () => {
+    if (!year || busy) return;
+    setErr(''); setResult(null); setBusy(true);
+    try {
+      const res = await generateMonth(Number(month));
+      setResult({ scope: monthName(month), created: res.created || 0, skipped: res.skipped || 0, zero: res.zero || 0 });
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const noYear = !yearLoading && !year && !yearErr;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+      <div onClick={busy ? undefined : onClose} style={{ position: 'absolute', inset: 0 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+          <ModalShell
+            title="Generate fees"
+            subtitle={year ? `Current academic year · ${year.year_label}` : 'Create monthly fee rows for all active students'}
+            width={460}
+            footer={<>
+              <Btn variant="ghost" size="md" onClick={onClose} disabled={busy}>Close</Btn>
+              <Btn variant="primary" size="md" onClick={handleMonth} disabled={busy || !year}>
+                {busy ? 'Generating…' : 'Generate for this month'}
+              </Btn>
+            </>}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {yearLoading && (
+                <div style={{ ...hfText.small, color: hf.muted }}>Loading academic year…</div>
+              )}
+              {yearErr && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>Couldn't load academic year: {yearErr}</div>
+              )}
+              {noYear && (
+                <div style={{ ...hfText.small, color: hf.muted, background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>Set a current academic year first — fees are generated per year.</div>
+              )}
+
+              {year && (<>
+                <div>
+                  <FieldLabel required>Month</FieldLabel>
+                  <FSelect value={month} onChange={setMonth} options={MONTH_OPTS} disabled={busy} />
+                </div>
+                <div style={{
+                  padding: '12px 14px', borderRadius: 10,
+                  background: hf.surface2, border: `1px solid ${hf.borderS}`,
+                  ...hfText.small, color: hf.muted, lineHeight: 1.5,
+                }}>
+                  Generates tuition + transport fees for every active enrollment in the selected month. Safe to re-run — fees that already exist are skipped, not duplicated.
+                </div>
+              </>)}
+
+              {err && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
+              )}
+
+              {result && (
+                <div style={{ padding: '12px 14px', borderRadius: 10, background: hf.surface2, border: `1px solid ${hf.borderS}` }}>
+                  <div style={{ ...hfText.small, fontWeight: 700, marginBottom: 6 }}>Done · {result.scope}</div>
+                  <div style={{ display: 'flex', gap: 16, ...hfText.small, color: hf.ink2 }}>
+                    <span><b style={{ ...hfText.num, color: hf.good }}>{result.created}</b> created</span>
+                    <span><b style={{ ...hfText.num }}>{result.skipped}</b> skipped</span>
+                    <span><b style={{ ...hfText.num }}>{result.zero}</b> zero-fee</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </ModalShell>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── A4 · Fees — Collect flow + Pending / Recent / History tabs ───────────
 const HA4 = () => {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState(() => FEE_TAB_IDS[(searchParams.get('tab') || '').toLowerCase()] || 'Collect');
   const [historyStudentId, setHistoryStudentId] = useState(null); // preload for History tab
+  const [genOpen, setGenOpen] = useState(false); // Generate Fees modal
 
   // Step 1 — find student
   const [query, setQuery] = useState('');
@@ -173,7 +283,10 @@ const HA4 = () => {
       active="Fees"
       breadcrumb="Home · Fees"
       title="Fees"
+      topRight={<Btn variant="outline" size="sm" icon={I.card} onClick={() => setGenOpen(true)}>Generate fees</Btn>}
     >
+      {genOpen && <GenerateFeesModal onClose={() => setGenOpen(false)} />}
+
       <Tabs items={[
         { label: 'Collect', id: 'Collect' },
         { label: 'Pending', id: 'Pending' },
@@ -354,7 +467,7 @@ const HA4 = () => {
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <FieldLabel>Notes</FieldLabel>
-                  <TextInput value={notes} onChange={setNotes} placeholder="Optional — e.g. partial payment, cheque no." />
+                  <FInput value={notes} onChange={setNotes} placeholder="Optional — e.g. partial payment, cheque no." />
                 </div>
               </div>
 

@@ -744,7 +744,7 @@ const HA3 = () => {
 
 // Student-level fee ledger: that student's fees (paid + outstanding) with a
 // paid/outstanding summary. Each fee row expands to show its payment(s).
-const StudentFeeLedger = ({ studentId }) => {
+const StudentFeeLedger = ({ studentId, reloadToken }) => {
   const [fees, setFees] = useState([]);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -767,7 +767,7 @@ const StudentFeeLedger = ({ studentId }) => {
       .catch((e) => { if (!cancelled) setError(e.message); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [studentId]);
+  }, [studentId, reloadToken]);
 
   // Non-authoritative UI sums for the header (per-row figures stay exact strings).
   const totalPaid = payments
@@ -831,11 +831,175 @@ const StudentFeeLedger = ({ studentId }) => {
   );
 };
 
+// Per-student fee generation for custom months. Amounts come from the class_year
+// standard fee — this only controls WHICH months get generated. Months that
+// already have a fee are marked and disabled so the admin only ticks open ones.
+const GenerateStudentFeesModal = ({ studentId, studentName, onClose, onGenerated }) => {
+  const [enrollment, setEnrollment] = useState(null);
+  const [existingMonths, setExistingMonths] = useState(new Set());
+  const [picked, setPicked] = useState(new Set());
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [result, setResult] = useState(null); // { created, skipped, zero }
+
+  // Which months already have a fee (tuition or transport) for this student.
+  const loadExisting = () =>
+    apiFetch(`/api/fees?student_id=${studentId}&limit=100`)
+      .then((feeRes) => setExistingMonths(new Set((feeRes.data || []).map((f) => Number(f.month)))));
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setLoadErr('');
+    // Active enrollment → enrollment id, class label, academic year (for ordering + id).
+    Promise.all([
+      apiFetch(`/api/enrollments?student_id=${studentId}&status=active&limit=1`),
+      apiFetch(`/api/fees?student_id=${studentId}&limit=100`),
+    ])
+      .then(([enrRes, feeRes]) => {
+        if (cancelled) return;
+        setEnrollment((enrRes.data || [])[0] || null);
+        setExistingMonths(new Set((feeRes.data || []).map((f) => Number(f.month))));
+      })
+      .catch((e) => { if (!cancelled) setLoadErr(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [studentId]);
+
+  const ay = enrollment?.class_year?.academic_year;
+  // Months ordered by the academic year (Apr→Mar for an April-start session).
+  const startMonth = ay?.start_date ? new Date(ay.start_date).getMonth() + 1 : 4;
+  const orderedMonths = Array.from({ length: 12 }, (_, i) => ((startMonth - 1 + i) % 12) + 1);
+
+  const cls = enrollment?.class_year?.class;
+  const classLabel = cls ? `${cls.name}-${cls.section}` : '—';
+
+  const toggle = (m) => {
+    if (existingMonths.has(m) || busy) return;
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(m)) next.delete(m); else next.add(m);
+      return next;
+    });
+  };
+
+  const handleGenerate = async () => {
+    if (!enrollment || picked.size === 0 || busy) return;
+    setErr(''); setResult(null); setBusy(true);
+    try {
+      const res = await apiFetch('/api/fees/generate', {
+        method: 'POST',
+        body: {
+          enrollment_id: enrollment.id,
+          academic_year_id: ay.id,
+          months: Array.from(picked).sort((a, b) => a - b),
+        },
+      });
+      setResult({ created: res.created || 0, skipped: res.skipped || 0, zero: res.zero || 0 });
+      setPicked(new Set());
+      await loadExisting();   // newly created months now show as "exists"
+      onGenerated?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const noEnrollment = !loading && !loadErr && !enrollment;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+      <div onClick={busy ? undefined : onClose} style={{ position: 'absolute', inset: 0 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+          <ModalShell
+            title="Generate fees"
+            subtitle={enrollment ? `${studentName} · Class ${classLabel}${ay?.year_label ? ` · ${ay.year_label}` : ''}` : studentName}
+            width={500}
+            footer={<>
+              <Btn variant="ghost" size="md" onClick={onClose} disabled={busy}>Close</Btn>
+              <Btn variant="primary" size="md" onClick={handleGenerate} disabled={busy || !enrollment || picked.size === 0}>
+                {busy ? 'Generating…' : `Generate${picked.size ? ` ${picked.size} month${picked.size === 1 ? '' : 's'}` : ''}`}
+              </Btn>
+            </>}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {loading && <div style={{ ...hfText.small, color: hf.muted }}>Loading enrollment & fees…</div>}
+              {loadErr && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>Couldn't load: {loadErr}</div>
+              )}
+              {noEnrollment && (
+                <div style={{ ...hfText.small, color: hf.muted, background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>Enroll this student in a class first — fees attach to an active enrollment.</div>
+              )}
+
+              {enrollment && (<>
+                <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5 }}>
+                  Tick the months to generate. Amounts come from the class's standard fee (set in <b>Fee Plans</b>). Months that already have a fee are marked and can't be re-ticked.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                  {orderedMonths.map((m) => {
+                    const exists = existingMonths.has(m);
+                    const on = picked.has(m);
+                    return (
+                      <button
+                        key={m}
+                        onClick={() => toggle(m)}
+                        disabled={exists || busy}
+                        className="hf-btn"
+                        title={exists ? 'Already has a fee' : undefined}
+                        style={{
+                          padding: '10px 8px', borderRadius: 9, textAlign: 'left',
+                          border: `1px solid ${on ? hf.primary : hf.border}`,
+                          background: exists ? hf.surface2 : on ? hf.primarySoft : hf.surface,
+                          color: exists ? hf.muted : hf.ink,
+                          cursor: exists ? 'not-allowed' : 'pointer',
+                          display: 'flex', alignItems: 'center', gap: 8,
+                          fontFamily: hfFonts.ui, fontSize: 12.5, fontWeight: 600,
+                        }}
+                      >
+                        <span style={{
+                          width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                          border: `1.5px solid ${exists ? hf.faint : on ? hf.primary : hf.faint}`,
+                          background: on ? hf.primary : 'transparent',
+                          color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
+                        }}>{(on || exists) && I.check}</span>
+                        <span>{monthName(m)}</span>
+                        {exists && <span style={{ ...hfText.micro, fontSize: 9, marginLeft: 'auto' }}>EXISTS</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>)}
+
+              {err && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
+              )}
+              {result && (
+                <div style={{ padding: '12px 14px', borderRadius: 10, background: hf.surface2, border: `1px solid ${hf.borderS}` }}>
+                  <div style={{ ...hfText.small, fontWeight: 700, marginBottom: 6 }}>Done</div>
+                  <div style={{ display: 'flex', gap: 16, ...hfText.small, color: hf.ink2 }}>
+                    <span><b style={{ ...hfText.num, color: hf.good }}>{result.created}</b> created</span>
+                    <span><b style={{ ...hfText.num }}>{result.skipped}</b> skipped (already existed)</span>
+                    <span><b style={{ ...hfText.num }}>{result.zero}</b> zero-fee</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </ModalShell>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── A3 · Student detail ──────────────────────────────────────────────────
 const HA3Detail = () => {
   const { id } = useParams();              // student id from the URL
   const navigate = useNavigate();
   const [showEdit, setShowEdit] = useState(false);
+  const [showGenFees, setShowGenFees] = useState(false);
+  const [feeReload, setFeeReload] = useState(0); // bump to reload the ledger
   const [s, setS] = useState(null);        // the real student
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -885,6 +1049,7 @@ const HA3Detail = () => {
           <Btn variant="outline" size="sm" onClick={() => setShowEdit(true)}>✎ Edit</Btn>
           <Btn variant="outline" size="sm" icon={I.arrUp}>Promote</Btn>
           <Btn variant="outline" size="sm" style={{ color: hf.accent, borderColor: hf.accentEdge }}>Delete</Btn>
+          <Btn variant="outline" size="sm" icon={I.card} onClick={() => setShowGenFees(true)}>Generate fees</Btn>
           <Btn variant="primary" size="sm" icon={I.card}>Collect fees</Btn>
         </>}
       >
@@ -955,7 +1120,7 @@ const HA3Detail = () => {
 
           {/* RIGHT: fee history */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            <StudentFeeLedger studentId={s.id} />
+            <StudentFeeLedger studentId={s.id} reloadToken={feeReload} />
 
             <Card>
               <SectionHead title="Activity" subtitle="Last 30 days" />
@@ -989,6 +1154,14 @@ const HA3Detail = () => {
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
           <StudentFormModal initial={editInitial} onClose={() => setShowEdit(false)} onSaved={() => { setShowEdit(false); loadStudent(); }} />
         </div>
+      )}
+      {showGenFees && (
+        <GenerateStudentFeesModal
+          studentId={s.id}
+          studentName={s.name}
+          onClose={() => setShowGenFees(false)}
+          onGenerated={() => setFeeReload((n) => n + 1)}
+        />
       )}
     </>
   );
