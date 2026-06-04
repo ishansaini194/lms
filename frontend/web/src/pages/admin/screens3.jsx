@@ -8,7 +8,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame, SearchInput, FInput,
+  ModalShell, StateFrame, SearchInput, FInput, FSelect,
 } from '@/components/ui/primitives';
 import {
   Field, SetInput, SetTextArea, SetSelect, SetToggleRow, LogoSlot, PanelHead,
@@ -17,7 +17,7 @@ import {
   AdminChrome, AdminTopBar, Tabs, Segmented, ClassChip, Dropdown,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { HA7Modal, AcademicYearFormModal, ConfirmModal, PromoteStudentsModal } from '@/pages/admin/extras.jsx';
+import { HA7Modal, AcademicYearFormModal, ConfirmModal, PromoteStudentsModal, ManageExamTermsModal } from '@/pages/admin/extras.jsx';
 import { useAuth } from '@/auth/AuthContext';
 import {
   reportTerms,
@@ -37,15 +37,36 @@ const HA7 = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [showTerms, setShowTerms] = useState(false);
+  const [academicYear, setAcademicYear] = useState(null); // { id, year_label } | null
+  const [terms, setTerms] = useState([]);
+  const [termFilter, setTermFilter] = useState(''); // '' = all terms
 
-  const loadExams = () => {
+  const loadExams = (termId = '') => {
     setLoading(true);
-    apiFetch('/api/exams')
+    apiFetch(`/api/exams${termId ? `?exam_term_id=${termId}` : ''}`)
       .then((data) => setExams(Array.isArray(data) ? data : []))
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
-  useEffect(() => { loadExams(); }, []);
+  useEffect(() => { loadExams(termFilter); }, [termFilter]);
+
+  // Term filter + the modal's term picker both need the current year's terms.
+  const loadTerms = (ayId) => {
+    if (!ayId) { setTerms([]); return; }
+    apiFetch(`/api/exam-terms?academic_year_id=${ayId}`)
+      .then((data) => setTerms(Array.isArray(data) ? data : []))
+      .catch(() => setTerms([]));
+  };
+  useEffect(() => {
+    apiFetch('/api/academic-years')
+      .then((years) => {
+        const cur = Array.isArray(years) ? years.find((y) => y.is_current) : null;
+        setAcademicYear(cur ? { id: cur.id, year_label: cur.year_label } : null);
+        loadTerms(cur ? cur.id : null);
+      })
+      .catch(() => { setAcademicYear(null); setTerms([]); });
+  }, []);
 
   const q = search.trim().toLowerCase();
   const visibleExams = q
@@ -59,7 +80,7 @@ const HA7 = () => {
     try {
       await apiFetch(`/api/exams/${deleting.id}`, { method: 'DELETE' });
       setDeleting(null);
-      loadExams();
+      loadExams(termFilter);
     } catch (e) {
       setDelErr(e.message);
     } finally {
@@ -75,12 +96,20 @@ const HA7 = () => {
       title="Exams & Results"
       topRight={<>
         <Btn variant="outline" size="sm" icon={I.receipt}>Report cards</Btn>
+        <Btn variant="outline" size="sm" onClick={() => setShowTerms(true)}>Manage terms</Btn>
         <Btn variant="primary" size="sm" onClick={() => setShowCreate(true)}>+ Create exam</Btn>
       </>}
     >
       <Card padding={14} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div style={{ flex: 1, minWidth: 200 }}>
           <SearchInput value={search} onChange={setSearch} placeholder="Search subject, class, or exam…" width={'100%'} />
+        </div>
+        <div style={{ width: 190 }}>
+          <FSelect
+            value={termFilter}
+            onChange={setTermFilter}
+            options={[{ value: '', label: 'All terms' }, ...terms.map((t) => ({ value: String(t.id), label: t.name }))]}
+          />
         </div>
         <span style={{ ...hfText.small, color: hf.muted }}>{loading ? 'Loading…' : `${visibleExams.length} exam${visibleExams.length === 1 ? '' : 's'}`}</span>
       </Card>
@@ -116,7 +145,12 @@ const HA7 = () => {
                     <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{ex.subject} · {ex.class_label || '—'}</div>
                   </div>
                 </div>
-                {!ex.is_active && <Pill tone="neutral">Inactive</Pill>}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                  {ex.exam_term_name
+                    ? <Pill tone="primary">{ex.exam_term_name}</Pill>
+                    : <Pill tone="neutral">No term</Pill>}
+                  {!ex.is_active && <Pill tone="neutral">Inactive</Pill>}
+                </div>
               </div>
               <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 18 }}>
                 <div>
@@ -149,12 +183,31 @@ const HA7 = () => {
     </AdminChrome>
     {showCreate && (
       <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
-        <HA7Modal onClose={() => setShowCreate(false)} onSaved={() => { setShowCreate(false); loadExams(); }} />
+        <HA7Modal
+          academicYearId={academicYear?.id}
+          onManageTerms={() => { setShowCreate(false); setShowTerms(true); }}
+          onClose={() => setShowCreate(false)}
+          onSaved={() => { setShowCreate(false); loadExams(termFilter); }}
+        />
       </div>
     )}
     {editing && (
       <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
-        <HA7Modal initial={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); loadExams(); }} />
+        <HA7Modal
+          initial={editing}
+          academicYearId={academicYear?.id}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); loadExams(termFilter); }}
+        />
+      </div>
+    )}
+    {showTerms && (
+      <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+        <ManageExamTermsModal
+          academicYearId={academicYear?.id}
+          yearLabel={academicYear?.year_label}
+          onClose={() => { setShowTerms(false); loadTerms(academicYear?.id); loadExams(termFilter); }}
+        />
       </div>
     )}
     {deleting && (

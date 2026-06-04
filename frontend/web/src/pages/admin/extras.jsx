@@ -1000,13 +1000,14 @@ const HA6Modal = ({ onClose, onSaved, initial }) => {
 };
 
 // ─── A7 modal · Create / Edit exam ────────────────────────────────────────
-const HA7Modal = ({ onClose, onSaved, initial }) => {
+const HA7Modal = ({ onClose, onSaved, initial, academicYearId, onManageTerms }) => {
   const isEdit = !!initial;
   const [f, setF] = useState({
-    class_year_id: '', name: '', subject: '', max_marks: '', exam_date: '', teacher_id: null,
+    class_year_id: '', exam_term_id: '', name: '', subject: '', max_marks: '', exam_date: '', teacher_id: null,
     ...(initial || {}),
     ...(initial ? {
       class_year_id: initial.class_year_id != null ? String(initial.class_year_id) : '',
+      exam_term_id: initial.exam_term_id != null ? String(initial.exam_term_id) : '',
       max_marks: initial.max_marks != null ? String(initial.max_marks) : '',
       exam_date: initial.exam_date ? String(initial.exam_date).slice(0, 10) : '',
       teacher_id: initial.teacher_id ?? null,
@@ -1015,6 +1016,7 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
   const set = (k) => (v) => setF(p => ({ ...p, [k]: v }));
 
   const [classYears, setClassYears] = useState([]);
+  const [terms, setTerms] = useState([]);
   const [teachers, setTeachers] = useState([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -1026,6 +1028,17 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
       .then((data) => setClassYears(Array.isArray(data) ? data : []))
       .catch(() => setClassYears([]));
   }, [isEdit]);
+
+  // Term picker is required on create; immutable (read-only) on edit, so only
+  // fetch the year's terms when creating.
+  useEffect(() => {
+    if (isEdit || !academicYearId) return;
+    apiFetch(`/api/exam-terms?academic_year_id=${academicYearId}`)
+      .then((data) => setTerms(Array.isArray(data) ? data : []))
+      .catch(() => setTerms([]));
+  }, [isEdit, academicYearId]);
+
+  const noTerms = !isEdit && terms.length === 0;
 
   // Teachers feed the searchable assignment dropdown (create + edit).
   useEffect(() => {
@@ -1044,6 +1057,7 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
   const handleSave = async () => {
     setErr('');
     if (!isEdit && !f.class_year_id) { setErr('Please select a class-year.'); return; }
+    if (!isEdit && !f.exam_term_id) { setErr('Please select a term.'); return; }
     if (!f.name) { setErr('Exam name is required.'); return; }
     if (!f.subject) { setErr('Subject is required.'); return; }
     if (!f.max_marks || Number(f.max_marks) <= 0) { setErr('Max marks must be greater than zero.'); return; }
@@ -1062,6 +1076,7 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
       } else {
         const body = {
           class_year_id: Number(f.class_year_id),
+          exam_term_id: Number(f.exam_term_id),
           name: f.name,
           subject: f.subject,
           max_marks: Number(f.max_marks),
@@ -1086,7 +1101,7 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
         width={500}
         footer={<>
           <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
-          <Btn variant="primary" size="md" onClick={handleSave} disabled={saving}>
+          <Btn variant="primary" size="md" onClick={handleSave} disabled={saving || noTerms}>
             {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create exam')}
           </Btn>
         </>}
@@ -1100,6 +1115,36 @@ const HA7Modal = ({ onClose, onSaved, initial }) => {
               <FSelect value={f.class_year_id} onChange={set('class_year_id')}
                 options={[{ value: '', label: 'Select class-year…' },
                 ...classYears.map(cy => ({ value: String(cy.id), label: cyLabel(cy) }))]} />
+            )}
+          </div>
+
+          <div>
+            <FieldLabel required>Term</FieldLabel>
+            {isEdit ? (
+              // The backend can't move an exam between terms, so term is read-only on edit.
+              <FInput value={initial.exam_term_name || '—'} disabled />
+            ) : noTerms ? (
+              <div style={{
+                ...hfText.small, color: hf.ink2, lineHeight: 1.5,
+                background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px',
+                display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+              }}>
+                <span>
+                  {academicYearId
+                    ? 'No exam terms exist for this year yet.'
+                    : 'No current academic year is set — set one in Settings first.'}
+                </span>
+                {academicYearId && onManageTerms && (
+                  <button type="button" onClick={onManageTerms}
+                    style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: hf.primary, fontWeight: 600, fontFamily: hfFonts.ui, fontSize: 'inherit' }}>
+                    Create an exam term first →
+                  </button>
+                )}
+              </div>
+            ) : (
+              <FSelect value={f.exam_term_id} onChange={set('exam_term_id')}
+                options={[{ value: '', label: 'Select term…' },
+                ...terms.map(t => ({ value: String(t.id), label: t.name }))]} />
             )}
           </div>
 
@@ -1569,6 +1614,181 @@ const ManageSubjectsModal = ({ teacher, onClose }) => {
   );
 };
 
+// ─── A7 modal · Manage exam terms (CRUD) ──────────────────────────────────
+// School-wide terms (Mid-Term, Final, Unit Test 1…) for the current academic
+// year. Mirrors ManageSubjectsModal: list current terms with inline edit/remove
+// and an add row. Backend: GET/POST/PUT/DELETE /api/exam-terms.
+const sortTerms = (list) =>
+  [...list].sort((a, b) => (a.sort_order - b.sort_order) || a.name.localeCompare(b.name));
+
+const ManageExamTermsModal = ({ onClose, academicYearId, yearLabel }) => {
+  const [terms, setTerms] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+
+  const [addName, setAddName] = useState('');
+  const [addSort, setAddSort] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addErr, setAddErr] = useState('');
+
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [editSort, setEditSort] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [removingId, setRemovingId] = useState(null);
+  // One inline message for the current edit/remove action (the text names the term).
+  const [rowErr, setRowErr] = useState('');
+
+  const load = () => {
+    if (!academicYearId) { setTerms([]); setLoading(false); return; }
+    setLoading(true);
+    setLoadErr('');
+    apiFetch(`/api/exam-terms?academic_year_id=${academicYearId}`)
+      .then((data) => setTerms(sortTerms(Array.isArray(data) ? data : [])))
+      .catch((e) => setLoadErr(e.message || 'Failed to load terms'))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, [academicYearId]);
+
+  const add = async () => {
+    setAddErr('');
+    if (!addName.trim()) return;
+    setAdding(true);
+    try {
+      const body = { academic_year_id: academicYearId, name: addName.trim() };
+      if (addSort.trim() !== '') body.sort_order = Number(addSort);
+      const row = await apiFetch('/api/exam-terms', { method: 'POST', body });
+      setTerms((list) => sortTerms([...list, row]));
+      setAddName('');
+      setAddSort('');
+    } catch (e) {
+      // 409 duplicate name surfaces here as a friendly message.
+      setAddErr(e.message || 'Failed to add term');
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const startEdit = (t) => { setRowErr(''); setEditingId(t.id); setEditName(t.name); setEditSort(String(t.sort_order ?? 0)); };
+  const cancelEdit = () => { setEditingId(null); setEditName(''); setEditSort(''); };
+
+  const saveEdit = async (t) => {
+    setRowErr('');
+    if (!editName.trim()) { setRowErr('Name cannot be empty.'); return; }
+    setSavingEdit(true);
+    try {
+      const body = {
+        name: editName.trim(),
+        sort_order: editSort.trim() === '' ? (t.sort_order ?? 0) : Number(editSort),
+      };
+      const row = await apiFetch(`/api/exam-terms/${t.id}`, { method: 'PUT', body });
+      setTerms((list) => sortTerms(list.map((x) => (x.id === t.id ? row : x))));
+      cancelEdit();
+    } catch (e) {
+      setRowErr(e.message || 'Failed to save term');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const remove = async (t) => {
+    setRowErr('');
+    setRemovingId(t.id);
+    try {
+      await apiFetch(`/api/exam-terms/${t.id}`, { method: 'DELETE' });
+      setTerms((list) => list.filter((x) => x.id !== t.id));
+    } catch (e) {
+      // 409 in-use → "term has exams; remove or reassign them first".
+      setRowErr(e.message || 'Failed to remove term');
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  return (
+    <FormModal onClose={onClose}>
+      <ModalShell
+        title="Manage exam terms"
+        subtitle={`School-wide terms${yearLabel ? ` for ${yearLabel}` : ''}. Exams are created under a term.`}
+        width={540}
+        footer={<Btn variant="primary" size="md" onClick={onClose}>Done</Btn>}
+      >
+        {!academicYearId ? (
+          <div style={{ ...hfText.small, color: hf.muted, padding: '20px 0', textAlign: 'center' }}>
+            No current academic year is set — set one in Settings first.
+          </div>
+        ) : loading ? (
+          <div style={{ padding: '24px 0', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>
+        ) : loadErr ? (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, padding: '20px 0' }}>
+            <div style={{ ...hfText.small, color: hf.accent }}>{loadErr}</div>
+            <Btn variant="ghost" size="sm" onClick={load}>Retry</Btn>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            {/* Current terms */}
+            <div>
+              <FieldLabel>Current terms</FieldLabel>
+              {terms.length === 0 ? (
+                <div style={{ ...hfText.small, color: hf.muted, padding: '6px 2px' }}>No terms yet — add one below.</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {terms.map((t) => (
+                    <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 9, border: `1px solid ${hf.borderS}`, background: hf.surface2 }}>
+                      {editingId === t.id ? (
+                        <>
+                          <div style={{ flex: 1 }}>
+                            <FInput value={editName} onChange={setEditName} placeholder="Term name" />
+                          </div>
+                          <div style={{ width: 80 }}>
+                            <FInput type="number" value={editSort} onChange={setEditSort} placeholder="Order" />
+                          </div>
+                          <Btn variant="primary" size="sm" onClick={() => saveEdit(t)} disabled={savingEdit}>{savingEdit ? '…' : 'Save'}</Btn>
+                          <Btn variant="ghost" size="sm" onClick={cancelEdit} disabled={savingEdit}>Cancel</Btn>
+                        </>
+                      ) : (
+                        <>
+                          <span style={{ ...hfText.num, fontSize: 11.5, color: hf.muted, width: 22, textAlign: 'center' }}>{t.sort_order}</span>
+                          <span style={{ ...hfText.small, fontWeight: 600, color: hf.ink, flex: 1, minWidth: 0 }}>{t.name}</span>
+                          <button onClick={() => startEdit(t)} className="hf-btn" title="Edit" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
+                          <button onClick={() => remove(t)} disabled={removingId === t.id} className="hf-btn" title="Remove" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {rowErr && (
+                <div style={{ marginTop: 10, ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{rowErr}</div>
+              )}
+            </div>
+
+            {/* Add row */}
+            <div style={{ borderTop: `1px solid ${hf.borderS}`, paddingTop: 14 }}>
+              <FieldLabel>Add a term</FieldLabel>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <div style={{ flex: 1 }}>
+                  <FInput value={addName} onChange={setAddName} placeholder="e.g. Mid-Term" />
+                </div>
+                <div style={{ width: 90 }}>
+                  <FInput type="number" value={addSort} onChange={setAddSort} placeholder="Order" />
+                </div>
+                <Btn variant="primary" size="md" onClick={add} disabled={adding || !addName.trim()}>{adding ? '…' : 'Add'}</Btn>
+              </div>
+              {addErr && (
+                <div style={{ marginTop: 10, ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{addErr}</div>
+              )}
+            </div>
+          </div>
+        )}
+      </ModalShell>
+    </FormModal>
+  );
+};
+
 // ─── A9 modal · Promote students (bulk, year-end) ─────────────────────────
 // Wires POST /api/enrollments/promote. Three steps: pick the source + target
 // class-years, then an explicit confirm before the (bulk, significant) request
@@ -1710,7 +1930,7 @@ const PromoteStudentsModal = ({ onClose, onSaved }) => {
 
 export {
   StudentFormModal, TeacherFormModal, ClassFormModal, AcademicYearFormModal,
-  ClassYearSetupModal, AssignTeacherModal, ManageSubjectsModal,
+  ClassYearSetupModal, AssignTeacherModal, ManageSubjectsModal, ManageExamTermsModal,
   HA5Modal, HA6Modal, HA7Modal, ConfirmModal, PromoteStudentsModal,
   AStLoading, AStEmpty, AStError, AStConfirm, AStToastDenied,
 };

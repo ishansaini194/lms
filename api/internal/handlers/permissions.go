@@ -61,6 +61,19 @@ func teacherCanSeeClassYear(db *gorm.DB, teacherID, classYearID, schoolID uint) 
 	return count > 0
 }
 
+// teacherAssignedSubject: does this teacher have an ACTIVE teaching assignment
+// for exactly this (class_year, subject)? School-scoped. Subject is matched
+// exactly — the exam's subject must equal the assigned string. Gates teacher
+// exam creation (a teacher may only create exams for class+subjects they teach).
+func teacherAssignedSubject(db *gorm.DB, teacherID, classYearID uint, subject string, schoolID uint) bool {
+	var count int64
+	db.Model(&models.TeachingAssignment{}).
+		Where("school_id = ? AND teacher_id = ? AND class_year_id = ? AND subject = ? AND is_active = ?",
+			schoolID, teacherID, classYearID, subject, true).
+		Count(&count)
+	return count > 0
+}
+
 // teacherOwnsExam: is this teacher assigned to the exam?
 func teacherOwnsExam(db *gorm.DB, teacherID, examID, schoolID uint) bool {
 	var count int64

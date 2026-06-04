@@ -280,16 +280,18 @@ func (h *ExamsHandler) Create(c *fiber.Ctx) error {
 	}
 
 	if isTeacher(c) {
-		if !teacherOwnsClassYear(h.DB, middleware.GetTeacherID(c), body.ClassYearID, schoolID) {
-			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "you can only create exams for your own classes"})
-		}
-	}
-
-	// teacher (optional) belongs to school
-	if isTeacher(c) {
 		tid := middleware.GetTeacherID(c)
+		// Teachers may create exams only for an exact (class_year, subject) pair
+		// they're actively assigned to teach — no untaught classes, no subjects
+		// they aren't assigned for that class. 404 (not 403) on a miss, per the
+		// ownership-failure-as-404 convention — don't reveal whether it exists.
+		if !teacherAssignedSubject(h.DB, tid, body.ClassYearID, body.Subject, schoolID) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class_year not found in this school"})
+		}
+		// Force ownership to the creating teacher — ignore any teacher_id in the body.
 		body.TeacherID = &tid
 	} else if body.TeacherID != nil {
+		// Admin may assign any teacher in the school.
 		if err := h.validateTeacher(*body.TeacherID, schoolID); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher not found in this school"})
 		}
@@ -331,6 +333,14 @@ func (h *ExamsHandler) Update(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+
+	// Teacher can only update their own exam (404, don't reveal existence).
+	if isTeacher(c) {
+		tid := middleware.GetTeacherID(c)
+		if exam.TeacherID == nil || *exam.TeacherID != tid {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
+		}
 	}
 
 	updates := map[string]interface{}{}
@@ -414,14 +424,7 @@ func (h *ExamsHandler) Delete(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 
-	if isTeacher(c) {
-		tid := middleware.GetTeacherID(c)
-		if exam.TeacherID == nil || *exam.TeacherID != tid {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "exam not found"})
-		}
-	}
-
-	// Teacher can only delete their own exam
+	// Teacher can only delete their own exam (404, don't reveal existence).
 	if isTeacher(c) {
 		tid := middleware.GetTeacherID(c)
 		if exam.TeacherID == nil || *exam.TeacherID != tid {

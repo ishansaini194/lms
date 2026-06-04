@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
-import { Card, Btn, Pill, Avatar, FInput, SubjectIcon } from '@/components/ui/primitives';
+import { Card, Btn, Pill, Avatar, FInput, FSelect, ModalShell, SubjectIcon } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
@@ -20,6 +20,198 @@ const Skel = ({ w = '100%', h = 12, r = 6, style = {} }) => (
   }} />
 );
 
+const FieldLabel = ({ children }) => (
+  <div style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, marginBottom: 6 }}>{children}</div>
+);
+
+const ErrorBox = ({ children }) => (
+  <div style={{
+    ...hfText.small, color: hf.accent, background: hf.accentSoft,
+    border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px',
+  }}>{children}</div>
+);
+
+const Overlay = ({ onClose, children }) => (
+  <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000 }}>
+    <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>{children}</div>
+  </div>
+);
+
+// The teacher's (class + subject) teaching-assignment pairs, derived from the
+// dashboard responsibilities. Only rows with a subject are real teaching
+// assignments (class-teacher-only rows have an empty subject and are NOT
+// valid exam targets under the assignment-scoped rule). The composite value
+// `<class_year_id>::<subject>` fixes both fields when the teacher picks a pair,
+// and the subject is taken verbatim so it matches the assignment string exactly.
+function buildAssignmentPairs(responsibilities) {
+  const out = [];
+  const seen = new Set();
+  for (const r of responsibilities || []) {
+    if (!r.subject) continue;
+    const value = `${r.class_year_id}::${r.subject}`;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    out.push({ value, class_year_id: r.class_year_id, subject: r.subject, label: `${r.class_label} · ${r.subject}` });
+  }
+  return out;
+}
+
+// ── Create-exam modal (teacher) ─────────────────────────────────────────────
+// Scoped to the teacher's own (class + subject) assignments + admin-defined
+// terms. Subject is never free-typed — it comes from the chosen assignment.
+// teacher_id is NOT sent — the backend forces it to the creating teacher.
+const TeacherExamCreateModal = ({ onClose, onSaved }) => {
+  const [assignments, setAssignments] = useState([]);
+  const [terms, setTerms] = useState([]);
+  const [academicYearId, setAcademicYearId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+
+  const [pair, setPair] = useState(''); // "<class_year_id>::<subject>"
+  const [examTermId, setExamTermId] = useState('');
+  const [name, setName] = useState('');
+  const [maxMarks, setMaxMarks] = useState('');
+  const [date, setDate] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [dash, years] = await Promise.all([
+          apiFetch('/api/teacher/dashboard'),
+          apiFetch('/api/academic-years'),
+        ]);
+        if (cancelled) return;
+        setAssignments(buildAssignmentPairs(dash?.responsibilities));
+        const cur = Array.isArray(years) ? years.find((y) => y.is_current) : null;
+        const ayId = cur ? cur.id : null;
+        setAcademicYearId(ayId);
+        if (ayId) {
+          const t = await apiFetch(`/api/exam-terms?academic_year_id=${ayId}`);
+          if (!cancelled) setTerms(Array.isArray(t) ? t : []);
+        }
+      } catch (e) {
+        if (!cancelled) setLoadErr(e.message || 'Failed to load form');
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const noAssignments = !loading && !loadErr && assignments.length === 0;
+  // Teachers can't create terms — if none exist, block create and tell them to ask admin.
+  const noTerms = !loading && !loadErr && !!academicYearId && terms.length === 0;
+  const noYear = !loading && !loadErr && !academicYearId;
+  const blocked = noAssignments || noTerms || noYear;
+
+  const save = async () => {
+    setErr('');
+    const selected = assignments.find((a) => a.value === pair);
+    if (!selected) { setErr('Select a class & subject.'); return; }
+    if (!examTermId) { setErr('Select a term.'); return; }
+    if (!name.trim()) { setErr('Exam name is required.'); return; }
+    if (!maxMarks || Number(maxMarks) <= 0) { setErr('Max marks must be greater than zero.'); return; }
+    setSaving(true);
+    try {
+      const body = {
+        class_year_id: selected.class_year_id,
+        subject: selected.subject,
+        exam_term_id: Number(examTermId),
+        name: name.trim(),
+        max_marks: Number(maxMarks),
+      };
+      if (date) body.exam_date = new Date(date).toISOString();
+      await apiFetch('/api/exams', { method: 'POST', body });
+      onSaved?.();
+    } catch (e) {
+      setErr(e.message || 'Failed to create exam');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell
+        title="Create exam"
+        subtitle="For a class & subject you teach, under an exam term"
+        width={500}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={save} disabled={saving || loading || blocked}>
+            {saving ? 'Saving…' : 'Create exam'}
+          </Btn>
+        </>}
+      >
+        {loading ? (
+          <div style={{ padding: '24px 0', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>
+        ) : loadErr ? (
+          <ErrorBox>{loadErr}</ErrorBox>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div>
+              <FieldLabel>Class &amp; subject</FieldLabel>
+              {noAssignments ? (
+                <div style={{ ...hfText.small, color: hf.muted, background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>
+                  You have no assigned class+subjects — ask admin to assign you.
+                </div>
+              ) : (
+                <FSelect
+                  value={pair}
+                  onChange={setPair}
+                  options={[{ value: '', label: 'Select a class & subject…' },
+                  ...assignments.map((a) => ({ value: a.value, label: a.label }))]}
+                />
+              )}
+            </div>
+
+            <div>
+              <FieldLabel>Term</FieldLabel>
+              {noYear ? (
+                <div style={{ ...hfText.small, color: hf.muted, background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>
+                  No current academic year is set — ask your admin.
+                </div>
+              ) : noTerms ? (
+                <div style={{ ...hfText.small, color: hf.muted, background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>
+                  No exam terms yet — ask your admin to create one.
+                </div>
+              ) : (
+                <FSelect
+                  value={examTermId}
+                  onChange={setExamTermId}
+                  options={[{ value: '', label: 'Select a term…' },
+                  ...terms.map((t) => ({ value: String(t.id), label: t.name }))]}
+                />
+              )}
+            </div>
+
+            <div>
+              <FieldLabel>Exam name</FieldLabel>
+              <FInput value={name} onChange={setName} placeholder="e.g. Mid-Term" />
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: 12 }}>
+              <div>
+                <FieldLabel>Max marks</FieldLabel>
+                <FInput type="number" value={maxMarks} onChange={setMaxMarks} placeholder="50" />
+              </div>
+              <div>
+                <FieldLabel>Date</FieldLabel>
+                <FInput type="date" value={date} onChange={setDate} />
+              </div>
+            </div>
+
+            {err && <ErrorBox>{err}</ErrorBox>}
+          </div>
+        )}
+      </ModalShell>
+    </Overlay>
+  );
+};
+
 // ── Screen 1 · Exams list (/teacher/marks) ──────────────────────────────────
 
 export function TeacherMarksList() {
@@ -28,6 +220,7 @@ export function TeacherMarksList() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -114,9 +307,22 @@ export function TeacherMarksList() {
   }
 
   return (
-    <TeacherChrome active="Marks Entry" title="Marks Entry" breadcrumb="Home">
-      {body}
-    </TeacherChrome>
+    <>
+      <TeacherChrome
+        active="Marks Entry"
+        title="Marks Entry"
+        breadcrumb="Home"
+        topRight={<Btn variant="primary" size="sm" onClick={() => setShowCreate(true)}>+ Create exam</Btn>}
+      >
+        {body}
+      </TeacherChrome>
+      {showCreate && (
+        <TeacherExamCreateModal
+          onClose={() => setShowCreate(false)}
+          onSaved={() => { setShowCreate(false); load(); }}
+        />
+      )}
+    </>
   );
 }
 
