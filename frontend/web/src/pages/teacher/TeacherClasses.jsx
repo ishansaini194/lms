@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
-import { Card, Pill, Btn, Avatar } from '@/components/ui/primitives';
+import { Card, Pill, Btn, Avatar, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
@@ -47,7 +47,209 @@ const Skel = ({ w = '100%', h = 12, r = 6, style = {} }) => (
   }} />
 );
 
-const ClassCard = ({ cls, selected, onRoster, onAddHw }) => (
+const Overlay = ({ onClose, children }) => (
+  <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 1000 }}>
+    <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>{children}</div>
+  </div>
+);
+
+const FieldLabel = ({ children }) => (
+  <div style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, marginBottom: 6 }}>{children}</div>
+);
+
+const ErrorBox = ({ children }) => (
+  <div style={{
+    ...hfText.small, color: hf.accent, background: hf.accentSoft,
+    border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px',
+  }}>{children}</div>
+);
+
+// Notice composer pre-targeted to ONE class (the card's class). Teachers post
+// class-targeted notices only (never whole-school), mirroring TeacherNotices.
+const NoticeComposer = ({ classLabel, classYearId, onClose, onPosted }) => {
+  const [title, setTitle] = useState('');
+  const [bodyText, setBodyText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  const save = async () => {
+    setErr('');
+    if (!title.trim()) { setErr('Title is required.'); return; }
+    if (!bodyText.trim()) { setErr('Body is required.'); return; }
+    setSaving(true);
+    try {
+      await apiFetch('/api/notices', {
+        method: 'POST',
+        body: { title: title.trim(), body: bodyText.trim(), target_all_school: false, class_year_ids: [classYearId] },
+      });
+      onPosted?.();
+    } catch (e) {
+      setErr(e.message || 'Failed to post notice');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell
+        title="New notice"
+        subtitle={`Posted to ${classLabel} · visible to that class`}
+        width={520}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={save} disabled={saving}>{saving ? 'Posting…' : 'Post notice'}</Btn>
+        </>}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <FieldLabel>Title</FieldLabel>
+            <FInput value={title} onChange={setTitle} placeholder="e.g. Bring your science textbook tomorrow" />
+          </div>
+          <div>
+            <FieldLabel>Body</FieldLabel>
+            <FTextarea value={bodyText} onChange={setBodyText} rows={5} placeholder="Write the notice your class will see…" />
+          </div>
+          {err && <ErrorBox>{err}</ErrorBox>}
+        </div>
+      </ModalShell>
+    </Overlay>
+  );
+};
+
+const cyLabel = (cy) => {
+  const cls = cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}`;
+  const yr = cy.academic_year ? cy.academic_year.year_label : '';
+  return `${cls}${yr ? ' · ' + yr : ''}`;
+};
+
+// Class-teacher promote: the source is THIS Lead class (fixed); the teacher
+// picks any valid destination class-year. Mirrors the admin promote flow
+// (select → confirm → done). Backend gates the source to the class-teacher.
+const PromoteModal = ({ sourceId, sourceLabel, onClose, onPromoted }) => {
+  const [classYears, setClassYears] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+  const [toId, setToId] = useState('');
+  const [step, setStep] = useState('select'); // 'select' | 'confirm' | 'done'
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [result, setResult] = useState(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    // scope=all → every active class-year in the school (destinations the teacher
+    // doesn't lead are still valid targets).
+    apiFetch('/api/class-years?scope=all')
+      .then((data) => { if (!cancelled) setClassYears(Array.isArray(data) ? data : []); })
+      .catch((e) => { if (!cancelled) setLoadErr(e.message || 'Failed to load class-years'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Destinations = all active class-years except the source.
+  const options = classYears
+    .filter((cy) => cy.id !== sourceId)
+    .map((cy) => ({ value: String(cy.id), label: cyLabel(cy) }));
+  const destLabel = options.find((o) => o.value === toId)?.label || '—';
+
+  const goConfirm = () => {
+    setErr('');
+    if (!toId) { setErr('Pick a destination class-year.'); return; }
+    setStep('confirm');
+  };
+
+  const doPromote = async () => {
+    setErr('');
+    setBusy(true);
+    try {
+      const res = await apiFetch('/api/enrollments/promote', {
+        method: 'POST',
+        body: { from_class_year_id: sourceId, to_class_year_id: Number(toId) },
+      });
+      setResult(res);
+      setStep('done');
+      onPromoted?.(); // refresh the roster behind the modal
+    } catch (e) {
+      setErr(e.message || 'Promotion failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let inner;
+  if (step === 'done') {
+    const promoted = result?.promoted_count ?? 0;
+    const skipped = result?.skipped_count ?? 0;
+    inner = (
+      <ModalShell
+        title="Promotion complete"
+        width={460}
+        footer={<Btn variant="primary" size="md" onClick={onClose}>Done</Btn>}
+      >
+        <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.7 }}>
+          Promoted <b>{promoted}</b> student{promoted === 1 ? '' : 's'} from <b>{sourceLabel}</b> to <b>{destLabel}</b>.
+          {skipped > 0 && <> {' '}<b>{skipped}</b> student{skipped === 1 ? ' was' : 's were'} already enrolled in the target and skipped.</>}
+        </div>
+      </ModalShell>
+    );
+  } else if (step === 'confirm') {
+    inner = (
+      <ModalShell
+        title="Promote all active students?"
+        width={460}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={() => { setErr(''); setStep('select'); }} disabled={busy}>Back</Btn>
+          <Btn variant="primary" size="md" onClick={doPromote} disabled={busy}>{busy ? 'Promoting…' : 'Yes, promote'}</Btn>
+        </>}
+      >
+        <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+          Promote all active students from <b>{sourceLabel}</b> to <b>{destLabel}</b>? This moves their
+          enrollments — each is marked <b>promoted</b> in the source and re-created as active in the target.
+          Students already in the target are skipped.
+        </div>
+        {err && <div style={{ marginTop: 12 }}><ErrorBox>{err}</ErrorBox></div>}
+      </ModalShell>
+    );
+  } else {
+    inner = (
+      <ModalShell
+        title="Promote class"
+        subtitle={`Move all active students out of ${sourceLabel}`}
+        width={460}
+        footer={<>
+          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={goConfirm} disabled={loading || !!loadErr}>Continue</Btn>
+        </>}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div>
+            <FieldLabel>From</FieldLabel>
+            <FInput value={sourceLabel} disabled />
+          </div>
+          <div>
+            <FieldLabel>Promote to</FieldLabel>
+            {loading ? (
+              <div style={{ ...hfText.small, color: hf.muted, padding: '6px 2px' }}>Loading class-years…</div>
+            ) : (
+              <FSelect
+                value={toId}
+                onChange={setToId}
+                options={[{ value: '', label: 'Select destination class-year…' }, ...options]}
+              />
+            )}
+          </div>
+          {loadErr && <ErrorBox>{loadErr}</ErrorBox>}
+          {err && <ErrorBox>{err}</ErrorBox>}
+        </div>
+      </ModalShell>
+    );
+  }
+
+  return <Overlay onClose={onClose}>{inner}</Overlay>;
+};
+
+const ClassCard = ({ cls, selected, onRoster, onAddHw, onAddNotice, onPromote }) => (
   <Card padding={16} style={{
     display: 'flex', flexDirection: 'column', gap: 12,
     border: `1px solid ${selected ? hf.primaryEdge : hf.border}`,
@@ -71,12 +273,15 @@ const ClassCard = ({ cls, selected, onRoster, onAddHw }) => (
       <span style={{ ...hfText.small, color: hf.muted }}>students</span>
     </div>
 
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-      <Btn variant="primary" size="sm" onClick={() => onRoster(cls.class_year_id)}>Roster</Btn>
-      <Btn variant="ghost" size="sm" onClick={() => onAddHw(cls.class_year_id)}>+ HW</Btn>
-      {/* +Notice only on the class-teacher card; enable when HT5 (Notices) lands */}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2, flexWrap: 'wrap' }}>
+      <Btn variant="primary" size="sm" onClick={() => onRoster(cls.class_year_id)}>Select</Btn>
+      <Btn variant="outline" size="sm" onClick={() => onAddHw(cls.class_year_id)}>+ Homework</Btn>
+      {/* Class notices + promote come from the class teacher (Lead) only. */}
       {cls.is_class_teacher && (
-        <Btn variant="ghost" size="sm" disabled style={{ opacity: 0.5, cursor: 'not-allowed' }}>+ Notice</Btn>
+        <Btn variant="outline" size="sm" onClick={() => onAddNotice(cls.class_year_id, cls.class_label)}>+ Notice</Btn>
+      )}
+      {cls.is_class_teacher && (
+        <Btn variant="outline" size="sm" onClick={() => onPromote(cls.class_year_id, cls.class_label)}>Promote</Btn>
       )}
     </div>
   </Card>
@@ -119,6 +324,10 @@ const RosterTable = ({ rows, loading }) => {
   if (rows.length === 0) {
     return <div style={{ ...hfText.small, color: hf.muted, padding: '10px 2px' }}>No active students in this class yet.</div>;
   }
+  // No internal vertical scroll: the list flows and the page's single scroll
+  // container (TeacherChrome's <main>) reveals every row, matching the other
+  // teacher pages (Homework/Marks). overflowX stays for wide tables on narrow
+  // screens — that's horizontal only, not a competing vertical scroll.
   return (
     <div style={{ overflowX: 'auto' }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: hfFonts.ui }}>
@@ -188,6 +397,11 @@ export default function TeacherClasses() {
   const [rosterError, setRosterError] = useState('');
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
+  const [noticeTarget, setNoticeTarget] = useState(null); // { id, label } | null
+  const [promoteTarget, setPromoteTarget] = useState(null); // { id, label } | null
+  const [rosterRefresh, setRosterRefresh] = useState(0);
+  const [toast, setToast] = useState('');
+  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2600); };
 
   const loadClasses = useCallback(async () => {
     setLoading(true);
@@ -230,7 +444,7 @@ export default function TeacherClasses() {
       .catch((e) => { if (alive) setRosterError(e.message || 'Failed to load roster'); })
       .finally(() => { if (alive) setRosterLoading(false); });
     return () => { alive = false; };
-  }, [selected, page]);
+  }, [selected, page, rosterRefresh]);
 
   const onSelectClass = (id) => { setSelected(id); setPage(1); setSearch(''); };
 
@@ -275,6 +489,8 @@ export default function TeacherClasses() {
                 selected={c.class_year_id === selected}
                 onRoster={onSelectClass}
                 onAddHw={(id) => navigate(`/teacher/homework?class_year_id=${id}`)}
+                onAddNotice={(id, label) => setNoticeTarget({ id, label })}
+                onPromote={(id, label) => setPromoteTarget({ id, label })}
               />
             ))}
           </div>
@@ -285,7 +501,7 @@ export default function TeacherClasses() {
           <Card padding={0} style={{ overflow: 'hidden' }}>
             <div style={{ padding: '13px 16px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <div>
-                <div style={{ ...hfText.h2 }}>Roster · {selectedClass.class_label}</div>
+                <div style={{ ...hfText.h2 }}>Students · {selectedClass.class_label}</div>
                 <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{rosterMeta.total} active students</div>
               </div>
               <input
@@ -332,6 +548,32 @@ export default function TeacherClasses() {
   return (
     <TeacherChrome active="My Classes" title="My Classes" breadcrumb="Home">
       {body}
+
+      {noticeTarget && (
+        <NoticeComposer
+          classLabel={noticeTarget.label}
+          classYearId={noticeTarget.id}
+          onClose={() => setNoticeTarget(null)}
+          onPosted={() => { const l = noticeTarget.label; setNoticeTarget(null); showToast(`Notice posted to ${l}`); }}
+        />
+      )}
+
+      {promoteTarget && (
+        <PromoteModal
+          sourceId={promoteTarget.id}
+          sourceLabel={promoteTarget.label}
+          onClose={() => setPromoteTarget(null)}
+          onPromoted={() => setRosterRefresh((n) => n + 1)}
+        />
+      )}
+
+      {toast && (
+        <div style={{
+          position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', zIndex: 1100,
+          background: hf.ink, color: '#fff', padding: '10px 18px', borderRadius: 10,
+          ...hfText.small, fontWeight: 600, boxShadow: hf.shadowLg,
+        }}>{toast}</div>
+      )}
     </TeacherChrome>
   );
 }

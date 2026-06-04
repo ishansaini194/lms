@@ -260,6 +260,16 @@ func (h *EnrollmentsHandler) Promote(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "to_class_year_id not found or inactive"})
 	}
 
+	// A teacher may promote only a class they are the class-teacher of (the
+	// source they "own"); the destination is any valid class-year (validated
+	// above). 404 on a non-owned source — ownership-failure convention, don't
+	// reveal existence. Admins promote any source/destination.
+	if isTeacher(c) {
+		if !teacherOwnsClassYear(h.DB, middleware.GetTeacherID(c), body.FromClassYearID, schoolID) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "from_class_year_id not found or inactive"})
+		}
+	}
+
 	var promotedCount int
 	var skippedCount int
 

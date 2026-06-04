@@ -58,7 +58,11 @@ func (h *ClassYearHandler) List(c *fiber.Ctx) error {
 	if classID > 0 {
 		query = query.Where("class_id = ?", classID)
 	}
-	if isTeacher(c) {
+	// Teachers see only the class-years they're the class-teacher of, EXCEPT with
+	// ?scope=all, which returns every active class-year in the school (read-only).
+	// Needed for the class-teacher promote destination picker — the target is
+	// usually a class they don't lead. Admins are unaffected by the param.
+	if isTeacher(c) && c.Query("scope") != "all" {
 		query = query.Where("class_teacher_id = ?", middleware.GetTeacherID(c))
 	}
 

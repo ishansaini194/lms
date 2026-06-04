@@ -181,10 +181,10 @@ export const AdminChrome = ({ active, title, breadcrumb, topRight, children, con
     background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink, overflow: 'hidden',
   }}>
     <AdminSidebar active={active} />
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
       <AdminTopBar title={title} breadcrumb={breadcrumb} right={topRight} />
       <main className="hf-scroll" style={{
-        flex: 1, overflow: 'auto', padding: contentPad,
+        flex: 1, minHeight: 0, overflow: 'auto', padding: contentPad,
         display: 'flex', flexDirection: 'column', gap: 18,
       }}>
         {children}

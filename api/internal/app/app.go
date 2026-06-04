@@ -147,7 +147,9 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	enrollments.Get("/", middleware.RequireRole("admin", "teacher"), enrollmentHandler.List)
 	enrollments.Get("/:id", middleware.RequireRole("admin", "teacher"), enrollmentHandler.GetOne)
 	enrollments.Put("/:id", middleware.RequireRole("admin"), enrollmentHandler.Update)
-	enrollments.Post("/promote", middleware.RequireRole("admin"), enrollmentHandler.Promote)
+	// Admin promotes any class school-wide; a class-teacher may promote only the
+	// class they're the class-teacher of (gated inside the handler).
+	enrollments.Post("/promote", middleware.RequireRole("admin", "teacher"), enrollmentHandler.Promote)
 
 	// Notices
 	noticesHandler := handlers.NewNoticesHandler(db)
@@ -169,15 +171,16 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	homeworks.Put("/:id", homeworksHandler.Update)
 	homeworks.Delete("/:id", homeworksHandler.Delete)
 
-	// Exam Terms (school-wide terms that group subject-exams). Admin-only for now;
-	// teachers get exam-term-aware exam creation in a later stage.
+	// Exam Terms (school-wide terms that group subject-exams). Reads are open to
+	// teachers too (the teacher exam-create modal needs the term picker); the
+	// list handler self-scopes by the JWT school. Mutations stay admin-only.
 	examTermsHandler := handlers.NewExamTermsHandler(db)
 
-	examTerms := api.Group("/exam-terms", middleware.AuthRequired(), middleware.RequireRole("admin"))
-	examTerms.Get("/", examTermsHandler.List)
-	examTerms.Post("/", examTermsHandler.Create)
-	examTerms.Put("/:id", examTermsHandler.Update)
-	examTerms.Delete("/:id", examTermsHandler.Delete)
+	examTerms := api.Group("/exam-terms", middleware.AuthRequired())
+	examTerms.Get("/", middleware.RequireRole("admin", "teacher"), examTermsHandler.List)
+	examTerms.Post("/", middleware.RequireRole("admin"), examTermsHandler.Create)
+	examTerms.Put("/:id", middleware.RequireRole("admin"), examTermsHandler.Update)
+	examTerms.Delete("/:id", middleware.RequireRole("admin"), examTermsHandler.Delete)
 
 	// Exams
 	examsHandler := handlers.NewExamsHandler(db)
