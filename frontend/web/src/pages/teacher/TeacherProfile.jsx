@@ -4,6 +4,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Btn, Avatar, FInput } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 const dash = (v) => (v === null || v === undefined || v === '' ? '—' : v);
@@ -39,11 +40,12 @@ const ReadField = ({ label, value }) => (
 // ── Card 1 · Profile details (read-only) ────────────────────────────────────
 
 const ProfileDetails = ({ teacher, loading, error, onRetry, user, school }) => {
+  const isMobile = useIsMobile();
   if (loading) {
     return (
       <Card padding={20}>
         <Skel w={180} h={18} />
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 20 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 16, marginTop: 20 }}>
           {[0, 1, 2, 3, 4, 5].map(i => <div key={i}><Skel w={70} h={10} /><Skel w={120} h={14} style={{ marginTop: 6 }} /></div>)}
         </div>
       </Card>
@@ -72,7 +74,7 @@ const ProfileDetails = ({ teacher, loading, error, onRetry, user, school }) => {
       </div>
 
       {/* Fields */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, padding: 22 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 18, padding: 22 }}>
         <ReadField label="Name" value={teacher?.name} />
         <ReadField label="Employee ID" value={teacher?.employee_id} />
         <ReadField label="Subject" value={teacher?.subject} />

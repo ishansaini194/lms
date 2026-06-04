@@ -13,7 +13,10 @@ body {
   color: #15181d;
 }
 #root {
-  height: 100vh;
+  /* min-height (not fixed height) so document-scroll layouts (teacher chrome,
+     mobile portals) can grow past the viewport and let the window scroll.
+     Fixed-height chromes set their own height:100dvh, so they're unaffected. */
+  min-height: 100vh;
 }
 * {
   box-sizing: border-box;

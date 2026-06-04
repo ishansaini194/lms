@@ -6,6 +6,7 @@ import { I } from '@/components/icons';
 import { Card, Pill, Btn, Stat } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -207,6 +208,7 @@ const DashError = ({ message, onRetry }) => (
 export default function TeacherDashboard() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -244,7 +246,7 @@ export default function TeacherDashboard() {
     body = (
       <>
         {/* Stat row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 14 }}>
           <Stat label="Classes I teach" value={responsibilities.length} icon={I.grid}
             hint={`across ${distinctClasses} ${distinctClasses === 1 ? 'class' : 'classes'}`} />
           <Stat label="Students" value={data?.total_students ?? 0} icon={I.user} hint="total load" />
@@ -254,7 +256,7 @@ export default function TeacherDashboard() {
         </div>
 
         {/* Two-column grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.4fr 1fr', gap: 14, alignItems: 'start' }}>
           {/* Left */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <SectionCard title="My classes & subjects">

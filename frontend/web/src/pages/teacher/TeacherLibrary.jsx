@@ -364,14 +364,14 @@ export default function TeacherLibrary() {
             {files.length === 0 ? 'No files in the library yet. Upload the first one.' : 'No files match these filters.'}
           </Card>
         ) : (
-          <Card padding={0}>
-            <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 1fr 1fr 0.8fr 1.2fr 0.8fr 1fr 130px', padding: '11px 16px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`, ...hfText.micro, fontSize: 10 }}>
+          <Card padding={0} style={{ overflowX: 'auto' }}>
+            <div style={{ display: 'grid', minWidth: 900, gridTemplateColumns: '2.2fr 1fr 1fr 0.8fr 1.2fr 0.8fr 1fr 130px', padding: '11px 16px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`, ...hfText.micro, fontSize: 10 }}>
               <div>Title</div><div>Category</div><div>Subject</div><div>Class</div><div>Uploaded by</div><div>Size</div><div>Added</div><div></div>
             </div>
             {visible.map((f, i) => {
               const mine = f.uploaded_by_id === myId;
               return (
-                <div key={f.id} style={{ display: 'grid', gridTemplateColumns: '2.2fr 1fr 1fr 0.8fr 1.2fr 0.8fr 1fr 130px', padding: '10px 16px', alignItems: 'center', borderBottom: i === visible.length - 1 ? 'none' : `1px solid ${hf.borderS}` }}>
+                <div key={f.id} style={{ display: 'grid', minWidth: 900, gridTemplateColumns: '2.2fr 1fr 1fr 0.8fr 1.2fr 0.8fr 1fr 130px', padding: '10px 16px', alignItems: 'center', borderBottom: i === visible.length - 1 ? 'none' : `1px solid ${hf.borderS}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <FileIcon />
                     <span style={{ ...hfText.body, fontWeight: 600, color: hf.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.title}</span>

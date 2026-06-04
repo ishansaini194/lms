@@ -4,6 +4,7 @@ import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Btn, Pill, Avatar, FInput, FSelect, ModalShell, SubjectIcon } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -216,6 +217,7 @@ const TeacherExamCreateModal = ({ onClose, onSaved }) => {
 
 export function TeacherMarksList() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [exams, setExams] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -240,7 +242,7 @@ export function TeacherMarksList() {
   let body;
   if (loading) {
     body = (
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
         {[0, 1, 2].map(i => <Card key={i} padding={16}><Skel w={120} h={15} /><Skel h={12} style={{ marginTop: 12 }} /></Card>)}
       </div>
     );
@@ -270,7 +272,7 @@ export function TeacherMarksList() {
         {visible.length === 0 ? (
           <Card padding={40} style={{ textAlign: 'center', ...hfText.small, color: hf.muted }}>No exams match "{search}".</Card>
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
             {visible.map((ex) => (
               <Card key={ex.id} padding={0} hoverable style={{ cursor: 'pointer' }}>
                 <div onClick={() => navigate(`/teacher/marks/${ex.id}`)}>
@@ -361,6 +363,7 @@ const MarksRow = ({ row, value, max, invalid, onChange, last }) => {
 export function TeacherMarksGrid() {
   const { examId } = useParams();
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [exam, setExam] = useState(null);
   const [rows, setRows] = useState([]);
   const [marks, setMarks] = useState({}); // enrollment_id -> marks string
@@ -444,7 +447,7 @@ export function TeacherMarksGrid() {
         <>
           {/* Context bar */}
           <Card padding={0}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)' }}>
               {[
                 { label: 'Class', value: exam?.class_year_label || exam?.class_label || '—' },
                 { label: 'Subject', value: exam?.subject || '—' },
@@ -484,27 +487,33 @@ export function TeacherMarksGrid() {
               <div style={{ margin: '12px 20px 0', ...hfText.small, color: hf.accent }}>Some marks are outside 0–{max}. Fix the highlighted rows before saving.</div>
             )}
 
-            <div style={{
-              display: 'grid', gridTemplateColumns: '36px 1.5fr 110px 150px 70px 60px',
-              padding: '11px 20px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
-              ...hfText.micro, fontSize: 10, marginTop: 12,
-            }}>
-              <div /><div>Student</div><div>Adm. no</div><div>Marks</div><div>%</div><div>Grade</div>
+            {/* Dense entry grid stays a table; scrolls sideways on phones
+                (minWidth) so inputs stay aligned and accurate. */}
+            <div style={{ overflowX: 'auto', marginTop: 12 }}>
+              <div style={{ minWidth: 560 }}>
+                <div style={{
+                  display: 'grid', gridTemplateColumns: '36px 1.5fr 110px 150px 70px 60px',
+                  padding: '11px 20px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`,
+                  ...hfText.micro, fontSize: 10,
+                }}>
+                  <div /><div>Student</div><div>Adm. no</div><div>Marks</div><div>%</div><div>Grade</div>
+                </div>
+                {rows.length === 0 && (
+                  <div style={{ padding: '30px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No active students in this class.</div>
+                )}
+                {rows.map((r, i) => (
+                  <MarksRow
+                    key={r.enrollment_id}
+                    row={r}
+                    value={marks[r.enrollment_id] ?? ''}
+                    max={max}
+                    invalid={isInvalid(marks[r.enrollment_id])}
+                    onChange={setMark(r.enrollment_id)}
+                    last={i === rows.length - 1}
+                  />
+                ))}
+              </div>
             </div>
-            {rows.length === 0 && (
-              <div style={{ padding: '30px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No active students in this class.</div>
-            )}
-            {rows.map((r, i) => (
-              <MarksRow
-                key={r.enrollment_id}
-                row={r}
-                value={marks[r.enrollment_id] ?? ''}
-                max={max}
-                invalid={isInvalid(marks[r.enrollment_id])}
-                onChange={setMark(r.enrollment_id)}
-                last={i === rows.length - 1}
-              />
-            ))}
             <div style={{ padding: '12px 20px', borderTop: `1px solid ${hf.borderS}`, background: hf.surface2, ...hfText.small, color: hf.muted }}>
               Leave a student blank if not yet marked · saved marks are visible to students.
             </div>

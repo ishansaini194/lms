@@ -4,6 +4,7 @@ import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, Avatar, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -330,7 +331,9 @@ const RosterTable = ({ rows, loading }) => {
   // screens — that's horizontal only, not a competing vertical scroll.
   return (
     <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: hfFonts.ui }}>
+      {/* minWidth keeps the dense roster a real table on phones — it scrolls
+          sideways within this container instead of crushing columns. */}
+      <table style={{ width: '100%', minWidth: 640, borderCollapse: 'collapse', fontFamily: hfFonts.ui }}>
         <thead>
           <tr>
             {COLS.map(c => (
@@ -361,15 +364,18 @@ const RosterTable = ({ rows, loading }) => {
   );
 };
 
-const PageLoading = () => (
+const PageLoading = () => {
+  const isMobile = useIsMobile();
+  return (
   <>
     <Skel w={260} h={14} />
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
       {[0, 1, 2].map(i => <Card key={i} padding={16}><Skel w={60} h={18} /><Skel h={12} style={{ marginTop: 14 }} /><Skel w="50%" h={12} style={{ marginTop: 10 }} /></Card>)}
     </div>
     <Card padding={16}><Skel w={160} h={14} /><Skel h={16} style={{ marginTop: 16 }} /><Skel h={16} style={{ marginTop: 10 }} /></Card>
   </>
-);
+  );
+};
 
 const PageError = ({ message, onRetry }) => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 48, textAlign: 'center' }}>
@@ -383,6 +389,7 @@ const PageError = ({ message, onRetry }) => (
 
 export default function TeacherClasses() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
   const preselectId = Number(searchParams.get('class_year_id')) || null;
 
@@ -509,8 +516,8 @@ export default function TeacherClasses() {
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Search by name…"
                 style={{
-                  width: 220, padding: '8px 12px', background: hf.surface,
-                  border: `1px solid ${hf.border}`, borderRadius: 9,
+                  width: isMobile ? '100%' : 220, padding: '8px 12px', background: hf.surface,
+                  border: `1px solid ${hf.border}`, borderRadius: 9, boxSizing: 'border-box',
                   fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none',
                 }}
               />

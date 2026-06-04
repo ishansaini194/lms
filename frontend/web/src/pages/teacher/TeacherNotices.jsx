@@ -3,6 +3,7 @@ import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, ModalShell, FInput, FTextarea } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -209,11 +210,14 @@ const ConfirmDelete = ({ notice, onCancel, onConfirm, busy, error }) => (
   </Overlay>
 );
 
-const PageLoading = () => (
-  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-    {[0, 1].map(i => <Card key={i} padding={16}><Skel w={120} h={14} /><Skel h={12} style={{ marginTop: 12 }} /><Skel w="70%" h={12} style={{ marginTop: 8 }} /></Card>)}
-  </div>
-);
+const PageLoading = () => {
+  const isMobile = useIsMobile();
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
+      {[0, 1].map(i => <Card key={i} padding={16}><Skel w={120} h={14} /><Skel h={12} style={{ marginTop: 12 }} /><Skel w="70%" h={12} style={{ marginTop: 8 }} /></Card>)}
+    </div>
+  );
+};
 
 const PageError = ({ message, onRetry }) => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 48, textAlign: 'center' }}>
@@ -226,6 +230,7 @@ const PageError = ({ message, onRetry }) => (
 // ── page ────────────────────────────────────────────────────────────────────
 
 export default function TeacherNotices() {
+  const isMobile = useIsMobile();
   const [list, setList] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -291,7 +296,7 @@ export default function TeacherNotices() {
     );
   } else {
     body = (
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
         {list.map(n => (
           <NoticeRow
             key={n.id}
