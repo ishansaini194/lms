@@ -6,6 +6,7 @@ import { I } from '@/components/icons';
 import { Card, Pill, Btn } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money } from '@/lib/studentFees';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -145,10 +146,12 @@ const NoticeLine = ({ n }) => (
   </div>
 );
 
-const DashLoading = () => (
+const DashLoading = () => {
+  const isMobile = useIsMobile();
+  return (
   <>
     <Card padding={20}><Skel w={220} h={20} /><Skel w={300} h={12} style={{ marginTop: 10 }} /></Card>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, alignItems: 'start' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, alignItems: 'start' }}>
       {[0, 1, 2].map(i => (
         <Card key={i} padding={16}>
           <Skel w={120} h={14} />
@@ -158,7 +161,8 @@ const DashLoading = () => (
       ))}
     </div>
   </>
-);
+  );
+};
 
 const DashError = ({ message, onRetry }) => (
   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, padding: 48, textAlign: 'center' }}>
@@ -172,6 +176,7 @@ const DashError = ({ message, onRetry }) => (
 
 export default function StudentDashboard() {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [profile, setProfile] = useState(null);
   const [homework, setHomework] = useState([]);
   const [notices, setNotices] = useState([]);
@@ -227,8 +232,8 @@ export default function StudentDashboard() {
           </div>
         </Card>
 
-        {/* Three clickable summary cards */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14, alignItems: 'start' }}>
+        {/* Three clickable summary cards — stacked full-width on mobile. */}
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, alignItems: 'start' }}>
           <SummaryCard
             icon={I.book}
             title="Homework"

@@ -5,6 +5,7 @@ import { I } from '@/components/icons';
 import { Card, Pill, Btn, Avatar } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money, feeLabel } from '@/lib/studentFees';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -65,7 +66,7 @@ const InfoRow = ({ label, value }) => {
   return (
     <div style={{ display: 'flex', gap: 12, padding: '7px 0', borderBottom: `1px solid ${hf.divider}` }}>
       <div style={{ ...hfText.small, color: hf.muted, width: 130, flexShrink: 0 }}>{label}</div>
-      <div style={{ ...hfText.body, color: hf.ink, fontWeight: 550 }}>{value}</div>
+      <div style={{ ...hfText.body, color: hf.ink, fontWeight: 550, minWidth: 0, overflowWrap: 'anywhere' }}>{value}</div>
     </div>
   );
 };
@@ -114,6 +115,7 @@ const PageError = ({ message, onRetry }) => (
 // ── page ────────────────────────────────────────────────────────────────────
 
 export default function StudentProfile() {
+  const isMobile = useIsMobile();
   const [profile, setProfile] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [feeData, setFeeData] = useState(null);
@@ -174,7 +176,7 @@ export default function StudentProfile() {
           </div>
         </Card>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14, alignItems: 'start' }}>
           {/* Student details */}
           <SectionCard title="Student details">
             <InfoRow label="Full name" value={p.name} />
@@ -238,7 +240,10 @@ export default function StudentProfile() {
 
               <div className="hf-scroll" style={{
                 display: 'flex', flexDirection: 'column', gap: 8,
-                maxHeight: 340, overflowY: 'auto',
+                // Desktop: contained scroll so a long list doesn't bloat the card.
+                // Mobile: flow with the page (no nested scroll-trap on touch).
+                maxHeight: isMobile ? 'none' : 340,
+                overflowY: isMobile ? 'visible' : 'auto',
               }}>
                 {fees.map((f) => <FeeRow key={f.id} f={f} />)}
               </div>

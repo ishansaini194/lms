@@ -3,6 +3,7 @@ import { StudentChrome } from '@/components/student/StudentChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, FilterSelect } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -102,6 +103,7 @@ const PageError = ({ message, onRetry }) => (
 // ── page ────────────────────────────────────────────────────────────────────
 
 export default function StudentResults() {
+  const isMobile = useIsMobile();
   const [results, setResults] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -197,7 +199,7 @@ export default function StudentResults() {
   }
 
   const topRight = !loading && !error && years.length > 0 ? (
-    <FilterSelect label="Year" value={yearId} onChange={setYearId} options={yearOptions} width={200} />
+    <FilterSelect label="Year" value={yearId} onChange={setYearId} options={yearOptions} width={isMobile ? '100%' : 200} />
   ) : null;
 
   return (

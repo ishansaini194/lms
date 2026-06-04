@@ -171,7 +171,10 @@ export const ModalShell = ({ title, subtitle, children, footer, width = 520, acc
     fontFamily: hfFonts.ui, color: hf.ink,
   }}>
     <div style={{
-      width, maxHeight: '100%', background: hf.surface,
+      // Cap to the viewport (minus the overlay's 24px padding each side) so wide
+      // modals never overflow on phones; unchanged on desktop where width fits.
+      width: typeof width === 'number' ? `min(${width}px, 100%)` : width,
+      maxHeight: '100%', background: hf.surface,
       borderRadius: 16, boxShadow: hf.shadowLg,
       display: 'flex', flexDirection: 'column', overflow: 'hidden',
       border: `1px solid ${hf.border}`,

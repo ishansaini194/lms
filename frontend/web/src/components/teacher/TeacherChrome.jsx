@@ -202,7 +202,7 @@ const TeacherTopBar = ({ title, breadcrumb, right }) => (
 export function TeacherChrome({ active, title, breadcrumb, topRight, children, contentPad = 24 }) {
   return (
     <div className="hf" style={{
-      width: '100%', height: '100%', display: 'flex',
+      width: '100%', height: '100dvh', display: 'flex',
       background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink, overflow: 'hidden',
     }}>
       <TeacherSidebar active={active} />

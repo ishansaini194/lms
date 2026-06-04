@@ -177,7 +177,7 @@ export const AdminTopBar = ({ title, breadcrumb, right }) => (
 
 export const AdminChrome = ({ active, title, breadcrumb, topRight, children, contentPad = 24 }) => (
   <div className="hf" style={{
-    width: '100%', height: '100%', display: 'flex',
+    width: '100%', height: '100dvh', display: 'flex',
     background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink, overflow: 'hidden',
   }}>
     <AdminSidebar active={active} />
