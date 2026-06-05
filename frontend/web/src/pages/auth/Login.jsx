@@ -1,17 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { hf, hfFonts, hfText } from '@/lib/styles';
-import { I } from '@/components/icons';
 import { Btn } from '@/components/ui/primitives';
-import { FInput } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 export default function Login() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = location.state?.from || '';
+  const isMobile = useIsMobile();
 
   const [schools, setSchools] = useState([]);
   const [schoolsLoading, setSchoolsLoading] = useState(true);
@@ -62,23 +62,47 @@ export default function Login() {
 
   const onKey = (e) => { if (e.key === 'Enter') submit(); };
 
+  const fieldStyle = {
+    width: '100%',
+    height: isMobile ? 46 : 40,
+    padding: isMobile ? '11px 13px' : '9px 12px',
+    background: hf.surface,
+    border: `1px solid ${hf.border}`,
+    borderRadius: 9,
+    fontSize: isMobile ? 16 : 13,
+    color: hf.ink,
+    fontFamily: hfFonts.ui,
+    outline: 'none',
+  };
+
   return (
     <div className="hf" style={{
-      width: '100%', height: '100%', minHeight: '100vh',
+      width: '100%', minHeight: '100dvh',
       background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink,
-      display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24,
+      display: 'flex',
+      alignItems: isMobile ? 'flex-start' : 'center',
+      justifyContent: 'center',
+      padding: isMobile ? '20px 16px 28px' : 24,
     }}>
-      <div style={{ width: 400, maxWidth: '100%' }}>
+      <div style={{ width: isMobile ? '100%' : 400, maxWidth: 400, paddingTop: isMobile ? 18 : 0 }}>
         {/* Brand */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 22, justifyContent: 'center' }}>
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: isMobile ? 18 : 22,
+          justifyContent: isMobile ? 'flex-start' : 'center',
+        }}>
           <div style={{
-            width: 40, height: 40, borderRadius: 10,
+            width: isMobile ? 44 : 40,
+            height: isMobile ? 44 : 40,
+            borderRadius: 10,
             background: `linear-gradient(135deg, ${hf.primary}, oklch(0.55 0.16 290))`,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            color: '#fff', fontWeight: 700, fontSize: 15, letterSpacing: '-0.02em',
+            color: '#fff', fontWeight: 700, fontSize: 15,
           }}>SM</div>
           <div>
-            <div style={{ ...hfText.h2 }}>StudyMe</div>
+            <div style={{ ...hfText.h2, fontSize: isMobile ? 18 : hfText.h2.fontSize }}>StudyMe</div>
             <div style={{ ...hfText.small, color: hf.muted, marginTop: -2 }}>School management</div>
           </div>
         </div>
@@ -86,14 +110,16 @@ export default function Login() {
         {/* Card */}
         <div style={{
           background: hf.surface, border: `1px solid ${hf.border}`,
-          borderRadius: 14, padding: 28, boxShadow: hf.shadowMd,
+          borderRadius: isMobile ? 12 : 14,
+          padding: isMobile ? 20 : 28,
+          boxShadow: isMobile ? hf.shadowSm : hf.shadowMd,
         }}>
-          <div style={{ ...hfText.h1, fontSize: 22, marginBottom: 4 }}>Sign in</div>
+          <div style={{ ...hfText.h1, fontSize: isMobile ? 24 : 22, marginBottom: 4 }}>Sign in</div>
           <div style={{ ...hfText.small, color: hf.muted, marginBottom: 20 }}>
             Welcome back. Enter your details to continue.
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 14 }}>
             <div>
               <label style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, display: 'block', marginBottom: 6 }}>School</label>
               <select
@@ -101,10 +127,10 @@ export default function Login() {
                 onChange={(e) => setSchoolCode(e.target.value)}
                 disabled={schoolsLoading}
                 style={{
-                  width: '100%', padding: '10px 12px', background: hf.surface,
-                  border: `1px solid ${hf.border}`, borderRadius: 9,
-                  fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui,
-                  appearance: 'none', cursor: 'pointer', outline: 'none',
+                  ...fieldStyle,
+                  appearance: 'none',
+                  cursor: schoolsLoading ? 'not-allowed' : 'pointer',
+                  background: schoolsLoading ? hf.surface2 : hf.surface,
                 }}
               >
                 {schoolsLoading ? (
@@ -119,7 +145,15 @@ export default function Login() {
 
             <div>
               <label style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, display: 'block', marginBottom: 6 }}>Username</label>
-              <FInput value={username} onChange={setUsername} placeholder="admin or ePunjab / employee ID" />
+              <input
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={onKey}
+
+                autoCapitalize="none"
+                autoCorrect="off"
+                style={fieldStyle}
+              />
             </div>
 
             <div>
@@ -129,12 +163,7 @@ export default function Login() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={onKey}
-                placeholder="••••••••"
-                style={{
-                  width: '100%', padding: '9px 12px', background: hf.surface,
-                  border: `1px solid ${hf.border}`, borderRadius: 9,
-                  fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none',
-                }}
+                style={fieldStyle}
               />
             </div>
 
@@ -147,7 +176,13 @@ export default function Login() {
             )}
 
             <Btn variant="primary" size="lg" onClick={submit} disabled={busy}
-              style={{ width: '100%', justifyContent: 'center', marginTop: 4 }}>
+              style={{
+                width: '100%',
+                justifyContent: 'center',
+                marginTop: 4,
+                height: isMobile ? 48 : undefined,
+                fontSize: isMobile ? 15 : undefined,
+              }}>
               {busy ? 'Signing in…' : 'Sign in'}
             </Btn>
           </div>
