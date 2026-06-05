@@ -277,6 +277,14 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// ---------- Student portal (read-only, scoped to own data) ----------
 	studentPortalHandler := handlers.NewStudentPortalHandler(db, "uploads/library")
 
+	// Web Push device subscriptions — shared by students AND teachers. Register
+	// this before the student-only /me group: Fiber group middleware is
+	// order-sensitive, and the /me student gate would otherwise intercept this
+	// /me child path for teachers.
+	pushSubMW := []fiber.Handler{middleware.AuthRequired(), middleware.RequireRole("student", "teacher")}
+	api.Post("/me/push-subscription", append(pushSubMW, studentPortalHandler.SavePushSubscription)...)
+	api.Delete("/me/push-subscription", append(pushSubMW, studentPortalHandler.DeletePushSubscription)...)
+
 	me := api.Group("/me", middleware.AuthRequired(), middleware.RequireRole("student"))
 	me.Get("/profile", studentPortalHandler.Profile)
 	me.Get("/enrollments", studentPortalHandler.Enrollments)
@@ -288,13 +296,4 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	me.Get("/assessment-marks", studentPortalHandler.AssessmentMarks)
 	me.Get("/library", studentPortalHandler.Library)
 	me.Get("/library/:id/download", studentPortalHandler.LibraryDownload)
-
-	// Web Push device subscriptions — shared by students AND teachers. The handler
-	// keys on the JWT's user_id (role-agnostic, stores by user), so the same path
-	// serves both portals and the shared frontend lib/push.js needs no change.
-	// Registered outside the student-only /me group so teachers aren't blocked by
-	// its RequireRole("student") gate.
-	pushSubMW := []fiber.Handler{middleware.AuthRequired(), middleware.RequireRole("student", "teacher")}
-	api.Post("/me/push-subscription", append(pushSubMW, studentPortalHandler.SavePushSubscription)...)
-	api.Delete("/me/push-subscription", append(pushSubMW, studentPortalHandler.DeletePushSubscription)...)
 }
