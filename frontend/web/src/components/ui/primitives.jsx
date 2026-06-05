@@ -139,7 +139,7 @@ export const SectionHead = ({ title, subtitle, right }) => (
 export const Stat = ({ label, value, hint, tone, icon }) => {
   const toneColor = tone === 'accent' ? hf.accent : tone === 'good' ? hf.good : hf.ink;
   return (
-    <Card padding={16} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <Card padding={16} style={{ display: 'flex', flexDirection: 'column', gap: 8, height: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ ...hfText.small, color: hf.muted, fontWeight: 550 }}>{label}</span>
         {icon}

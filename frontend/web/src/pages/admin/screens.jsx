@@ -12,7 +12,7 @@ import {
   AdminChrome, AdminTopBar, Tabs, Segmented,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal } from '@/pages/admin/extras.jsx';
+import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal, HA6Modal } from '@/pages/admin/extras.jsx';
 
 // Admin hi-fi · A1 Dashboard · A2 Classes · A3 Students · A3 Student detail
 
@@ -37,6 +37,7 @@ const HA1 = () => {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [showReminder, setShowReminder] = useState(false);
 
   useEffect(() => {
     apiFetch('/api/dashboard/stats')
@@ -98,7 +99,7 @@ const HA1 = () => {
               Combined balance <span style={{ ...hfText.num, fontWeight: 700 }}>₹{stats.pending_fees.total}</span>
             </div>
           </div>
-          <Btn variant="outline" size="sm">Send reminder</Btn>
+          <Btn variant="outline" size="sm" onClick={() => setShowReminder(true)}>Send reminder</Btn>
           <Btn variant="accent" size="sm" onClick={() => navigate('/admin/fees?tab=pending')}>View pending →</Btn>
         </div>
       )}
@@ -214,6 +215,24 @@ const HA1 = () => {
           ))}
         </Card>
       </div>
+
+      {showReminder && (
+        <HA6Modal
+          onClose={() => setShowReminder(false)}
+          onSaved={() => setShowReminder(false)}
+          prefill={{
+            title: 'Fee payment reminder',
+            target_all_school: true,
+            body:
+              'Dear Parents,\n\n' +
+              'This is a gentle reminder that the school fees are still pending. ' +
+              'We request you to kindly clear the outstanding amount on or before [due date] to avoid a late fee.\n\n' +
+              'Payments can be made at the school office or through the school app.\n\n' +
+              'Thank you for your cooperation.\n\n' +
+              '— School Administration',
+          }}
+        />
+      )}
     </AdminChrome>
   );
 };

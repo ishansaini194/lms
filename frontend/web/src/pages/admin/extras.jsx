@@ -865,12 +865,15 @@ const HA5Modal = ({ onClose }) => (
 );
 
 // ─── A6 modal · Compose notice ────────────────────────────────────────────
-const HA6Modal = ({ onClose, onSaved, initial }) => {
+// `initial` puts the modal in edit mode (PUT). `prefill` seeds the same fields
+// but stays in create mode (POST) — used by the dashboard's fee-reminder shortcut.
+const HA6Modal = ({ onClose, onSaved, initial, prefill }) => {
   const isEdit = !!initial;
-  const [f, setF] = useState({ title: initial?.title || '', body: initial?.body || '' });
+  const seed = initial || prefill;
+  const [f, setF] = useState({ title: seed?.title || '', body: seed?.body || '' });
   const set = (k) => (v) => setF(p => ({ ...p, [k]: v }));
-  const [wholeSchool, setWholeSchool] = useState(initial ? !!initial.target_all_school : true);
-  const [selectedIds, setSelectedIds] = useState(initial?.class_year_ids || []);
+  const [wholeSchool, setWholeSchool] = useState(seed ? !!seed.target_all_school : true);
+  const [selectedIds, setSelectedIds] = useState(seed?.class_year_ids || []);
   const [classYears, setClassYears] = useState([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
