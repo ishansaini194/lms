@@ -12,7 +12,7 @@ import {
   AdminChrome, AdminTopBar, Tabs, Segmented,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal, HA6Modal, PromoteStudentsModal } from '@/pages/admin/extras.jsx';
+import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal, HA6Modal } from '@/pages/admin/extras.jsx';
 
 // Admin hi-fi · A1 Dashboard · A2 Classes · A3 Students · A3 Student detail
 
@@ -1025,7 +1025,6 @@ const HA3Detail = () => {
   const navigate = useNavigate();
   const [showEdit, setShowEdit] = useState(false);
   const [showGenFees, setShowGenFees] = useState(false);
-  const [showPromote, setShowPromote] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
@@ -1089,7 +1088,7 @@ const HA3Detail = () => {
         title={s.name}
         topRight={<>
           <Btn variant="outline" size="sm" onClick={() => setShowEdit(true)}>✎ Edit</Btn>
-          <Btn variant="outline" size="sm" icon={I.arrUp} onClick={() => setShowPromote(true)}>Promote</Btn>
+          <Btn variant="outline" size="sm" icon={I.arrUp} disabled title="Coming soon">Promote</Btn>
           <Btn variant="outline" size="sm" style={{ color: hf.accent, borderColor: hf.accentEdge }} onClick={() => { setDelErr(''); setShowDelete(true); }}>Delete</Btn>
           <Btn variant="outline" size="sm" icon={I.card} onClick={() => setShowGenFees(true)}>Generate fees</Btn>
           <Btn variant="primary" size="sm" icon={I.card} onClick={() => navigate(`/admin/fees?tab=collect&student_id=${s.id}`)}>Collect fees</Btn>
@@ -1204,11 +1203,6 @@ const HA3Detail = () => {
           onClose={() => setShowGenFees(false)}
           onGenerated={() => setFeeReload((n) => n + 1)}
         />
-      )}
-      {showPromote && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
-          <PromoteStudentsModal onClose={() => setShowPromote(false)} onSaved={() => loadStudent()} />
-        </div>
       )}
       {showDelete && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>

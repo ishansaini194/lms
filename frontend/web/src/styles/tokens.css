@@ -51,6 +51,13 @@ body {
 .hf-btn:active {
   transform: translateY(0.5px);
 }
+.hf-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.hf-btn:disabled:active {
+  transform: none;
+}
 .hf-row {
   transition: background 0.1s;
 }
