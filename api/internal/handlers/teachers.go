@@ -27,6 +27,7 @@ type teacherListItem struct {
 	models.Teacher
 	ClassTeacherOf []string `json:"class_teacher_of"` // class labels e.g. ["5-A"]; empty if none
 	UserID         *uint    `json:"user_id"`          // linked login account, for password reset
+	Username       *string  `json:"username"`         // linked login username, for admin lookup
 }
 
 // enrichTeachers attaches class_teacher_of (current-AY class labels) to a page
@@ -49,20 +50,23 @@ func (h *TeachersHandler) enrichTeachers(schoolID uint, teachers []models.Teache
 	type userRow struct {
 		ID        uint
 		TeacherID uint
+		Username  string
 	}
 	var userRows []userRow
 	h.DB.Table("users").
-		Select("id, teacher_id").
+		Select("id, teacher_id, username").
 		Where("school_id = ? AND teacher_id IN ?", schoolID, ids).
 		Scan(&userRows)
-	userByTeacher := map[uint]uint{}
+	userByTeacher := map[uint]userRow{}
 	for _, u := range userRows {
-		userByTeacher[u.TeacherID] = u.ID
+		userByTeacher[u.TeacherID] = u
 	}
 	for i := range items {
-		if uid, ok := userByTeacher[items[i].ID]; ok {
-			id := uid
+		if user, ok := userByTeacher[items[i].ID]; ok {
+			id := user.ID
+			username := user.Username
 			items[i].UserID = &id
+			items[i].Username = &username
 		}
 	}
 

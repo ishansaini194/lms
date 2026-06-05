@@ -931,9 +931,75 @@ const ReceiptPanel = ({ receipt, student, fee, onAnother }) => {
   );
 };
 
+const TeacherDetailsModal = ({ teacher, onClose }) => {
+  const username = teacher?.username || '';
+  const classLabels = teacher?.class_teacher_of || [];
+  const Detail = ({ label, value, mono }) => (
+    <div>
+      <div style={{ ...hfText.micro, fontSize: 10 }}>{label}</div>
+      <div style={{
+        ...(mono ? hfText.num : hfText.body),
+        color: value ? hf.ink : hf.faint,
+        fontWeight: value ? 600 : 400,
+        marginTop: 4,
+        overflowWrap: 'anywhere',
+      }}>{value || '—'}</div>
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: 'absolute', inset: 0 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+        <ModalShell
+          title="Teacher details"
+          width={520}
+          footer={<Btn variant="primary" size="md" onClick={onClose}>Done</Btn>}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <Avatar name={teacher?.name || 'Teacher'} size={48} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ ...hfText.h2, fontSize: 18, color: hf.ink }}>{teacher?.name || 'Teacher'}</div>
+              <div style={{ ...hfText.small, color: hf.muted, marginTop: 2 }}>
+                {teacher?.is_active ? 'Active teacher' : 'Inactive teacher'}
+              </div>
+            </div>
+            {teacher?.is_active ? <Pill tone="good" dot>Active</Pill> : <Pill tone="neutral">Inactive</Pill>}
+          </div>
+
+          <div style={{ padding: '12px 14px', borderRadius: 10, background: hf.primarySoft, border: `1px solid ${hf.primaryEdge}` }}>
+            <div style={{ ...hfText.micro, fontSize: 10, color: hf.primary }}>Login username</div>
+            <div style={{ ...hfText.num, fontSize: 20, fontWeight: 700, color: hf.ink, marginTop: 4 }}>
+              {username || 'No linked account'}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 14 }}>
+            <Detail label="Employee ID" value={teacher?.employee_id} mono />
+            <Detail label="Phone" value={teacher?.phone} mono />
+            <Detail label="Email" value={teacher?.email} />
+            <Detail label="Subject" value={teacher?.subject} />
+            <Detail label="Qualification" value={teacher?.qualification} />
+            <Detail label="Teacher ID" value={teacher?.id ? String(teacher.id) : ''} mono />
+          </div>
+
+          <div>
+            <div style={{ ...hfText.micro, fontSize: 10, marginBottom: 7 }}>Class teacher of</div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {classLabels.length > 0
+                ? classLabels.map((label) => <Pill key={label} tone="primary">{label}</Pill>)
+                : <span style={{ ...hfText.small, color: hf.faint }}>—</span>}
+            </div>
+          </div>
+        </ModalShell>
+      </div>
+    </div>
+  );
+};
+
 // ─── A5 · Teachers ────────────────────────────────────────────────────────
 const HA5 = () => {
   const [showAdd, setShowAdd] = useState(false);
+  const [viewing, setViewing] = useState(null);
   const [editing, setEditing] = useState(null);
   const [managing, setManaging] = useState(null); // teacher whose subjects we're managing
   const [deleting, setDeleting] = useState(null);
@@ -1032,7 +1098,7 @@ const HA5 = () => {
     if (statusFilter === 'inactive' && t.is_active) return false;
     if (subjectFilter && t.subject !== subjectFilter) return false;
     if (q) {
-      const hay = `${t.name || ''} ${t.subject || ''} ${t.employee_id || ''}`.toLowerCase();
+      const hay = `${t.name || ''} ${t.username || ''} ${t.subject || ''} ${t.employee_id || ''}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -1052,7 +1118,7 @@ const HA5 = () => {
 
         <Card padding={14} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <div style={{ flex: 1, minWidth: 240 }}>
-            <SearchInput value={search} onChange={setSearch} placeholder="Search name, subject, emp. ID…" width={'100%'} />
+            <SearchInput value={search} onChange={setSearch} placeholder="Search name, username, subject, emp. ID…" width={'100%'} />
           </div>
           <FilterSelect label="Subject" value={subjectFilter} onChange={setSubjectFilter} options={subjectOptions} width={170} />
           <Segmented
@@ -1086,7 +1152,7 @@ const HA5 = () => {
           )}
 
           {!loading && !error && filtered.map((t, i) => (
-            <div key={t.id ?? i} className="hf-row" style={{
+            <div key={t.id ?? i} className="hf-row hf-clickable" onClick={() => setViewing(t)} style={{
               display: 'grid', gridTemplateColumns: '36px 1.4fr 130px 130px 110px 130px 100px 130px',
               padding: '11px 20px', alignItems: 'center',
               borderBottom: i < filtered.length - 1 ? `1px solid ${hf.borderS}` : 'none',
@@ -1095,7 +1161,7 @@ const HA5 = () => {
               <Avatar name={t.name} size={28} />
               <div>
                 <div style={{ ...hfText.small, fontWeight: 600 }}>{t.name}</div>
-                <div style={{ fontSize: 11, color: hf.muted }}>{t.qualification || '—'}</div>
+                <div style={{ fontSize: 11, color: hf.muted }}>{t.username ? `@${t.username}` : (t.qualification || '—')}</div>
               </div>
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.ink2 }}>{t.phone}</div>
               <div>{t.subject ? <Pill tone="neutral">{t.subject}</Pill> : <span style={{ ...hfText.small, color: hf.faint }}>—</span>}</div>
@@ -1111,17 +1177,17 @@ const HA5 = () => {
                   : <Pill tone="neutral">Inactive</Pill>}
               </div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                <button onClick={() => setEditing(t)} className="hf-btn" title="Edit" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
+                <button onClick={(e) => { e.stopPropagation(); setEditing(t); }} className="hf-btn" title="Edit" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
                 {t.is_active && (
-                  <button onClick={() => setManaging(t)} className="hf-btn" title="Manage subjects" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.book}</button>
+                  <button onClick={(e) => { e.stopPropagation(); setManaging(t); }} className="hf-btn" title="Manage subjects" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.book}</button>
                 )}
-                <button onClick={() => { setResetErr(''); setResetting(t); }} className="hf-btn" title="Reset password" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
+                <button onClick={(e) => { e.stopPropagation(); setResetErr(''); setResetting(t); }} className="hf-btn" title="Reset password" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
                 {t.is_active ? (
-                  <button onClick={() => { setDelErr(''); setDeleting(t); }} className="hf-btn" title="Deactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(t); }} className="hf-btn" title="Deactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
                   </button>
                 ) : (
-                  <button onClick={() => reactivate(t.id)} className="hf-btn" title="Reactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.good, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.refresh}</button>
+                  <button onClick={(e) => { e.stopPropagation(); reactivate(t.id); }} className="hf-btn" title="Reactivate" style={{ width: 28, height: 28, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.good, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.refresh}</button>
                 )}
               </div>
             </div>
@@ -1135,6 +1201,11 @@ const HA5 = () => {
       {showAdd && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
           <TeacherFormModal onClose={() => setShowAdd(false)} onSaved={() => { setShowAdd(false); loadTeachers(); }} />
+        </div>
+      )}
+      {viewing && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <TeacherDetailsModal teacher={viewing} onClose={() => setViewing(null)} />
         </div>
       )}
       {editing && (
