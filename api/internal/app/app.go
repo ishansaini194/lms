@@ -61,7 +61,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	})
 
 	loginLimiter := limiter.New(limiter.Config{
-		Max:        10,
+		Max:        200,
 		Expiration: 1 * time.Minute,
 		LimitReached: func(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
