@@ -12,7 +12,7 @@ import {
   AdminChrome, AdminTopBar, Tabs, Segmented,
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
-import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal, HA6Modal } from '@/pages/admin/extras.jsx';
+import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal, HA6Modal, PromoteStudentsModal } from '@/pages/admin/extras.jsx';
 
 // Admin hi-fi · A1 Dashboard · A2 Classes · A3 Students · A3 Student detail
 
@@ -833,12 +833,19 @@ const StudentFeeLedger = ({ studentId, reloadToken }) => {
                 {feePayments.length === 0 ? (
                   <div style={{ ...hfText.small, color: hf.muted, padding: '8px 0' }}>No payments against this fee yet.</div>
                 ) : feePayments.map((p) => (
-                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', opacity: p.status === 'reversed' ? 0.55 : 1 }}>
-                    <span style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{p.amount}</span>
-                    <Pill tone="neutral">{cap(p.payment_mode)}</Pill>
-                    <span style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{p.receipt_no}{p.status === 'reversed' ? ' (reversed)' : ''}</span>
-                    <div style={{ flex: 1 }} />
-                    <span style={{ ...hfText.small, color: hf.muted }}>{p.paid_at ? new Date(p.paid_at).toLocaleDateString() : ''}</span>
+                  <div key={p.id} style={{ padding: '6px 0', opacity: p.status === 'reversed' ? 0.55 : 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <span style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{p.amount}</span>
+                      <Pill tone="neutral">{cap(p.payment_mode)}</Pill>
+                      <span style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{p.receipt_no}{p.status === 'reversed' ? ' (reversed)' : ''}</span>
+                      <div style={{ flex: 1 }} />
+                      <span style={{ ...hfText.small, color: hf.muted }}>{p.paid_at ? new Date(p.paid_at).toLocaleDateString() : ''}</span>
+                    </div>
+                    {p.notes && (
+                      <div style={{ ...hfText.small, color: hf.muted, marginTop: 3, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
+                        <span style={{ color: hf.faint }}>Note: </span>{p.notes}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1018,6 +1025,10 @@ const HA3Detail = () => {
   const navigate = useNavigate();
   const [showEdit, setShowEdit] = useState(false);
   const [showGenFees, setShowGenFees] = useState(false);
+  const [showPromote, setShowPromote] = useState(false);
+  const [showDelete, setShowDelete] = useState(false);
+  const [delBusy, setDelBusy] = useState(false);
+  const [delErr, setDelErr] = useState('');
   const [feeReload, setFeeReload] = useState(0); // bump to reload the ledger
   const [s, setS] = useState(null);        // the real student
   const [loading, setLoading] = useState(true);
@@ -1031,6 +1042,18 @@ const HA3Detail = () => {
       .finally(() => setLoading(false));
   };
   useEffect(() => { loadStudent(); }, [id]);
+
+  const confirmDelete = async () => {
+    setDelBusy(true);
+    setDelErr('');
+    try {
+      await apiFetch(`/api/students/${id}`, { method: 'DELETE' });
+      navigate('/admin/students');
+    } catch (e) {
+      setDelErr(e.message);
+      setDelBusy(false);
+    }
+  };
 
   // Edit-mode prefill now comes from the real student.
   const editInitial = s ? {
@@ -1066,10 +1089,10 @@ const HA3Detail = () => {
         title={s.name}
         topRight={<>
           <Btn variant="outline" size="sm" onClick={() => setShowEdit(true)}>✎ Edit</Btn>
-          <Btn variant="outline" size="sm" icon={I.arrUp}>Promote</Btn>
-          <Btn variant="outline" size="sm" style={{ color: hf.accent, borderColor: hf.accentEdge }}>Delete</Btn>
+          <Btn variant="outline" size="sm" icon={I.arrUp} onClick={() => setShowPromote(true)}>Promote</Btn>
+          <Btn variant="outline" size="sm" style={{ color: hf.accent, borderColor: hf.accentEdge }} onClick={() => { setDelErr(''); setShowDelete(true); }}>Delete</Btn>
           <Btn variant="outline" size="sm" icon={I.card} onClick={() => setShowGenFees(true)}>Generate fees</Btn>
-          <Btn variant="primary" size="sm" icon={I.card}>Collect fees</Btn>
+          <Btn variant="primary" size="sm" icon={I.card} onClick={() => navigate(`/admin/fees?tab=collect&student_id=${s.id}`)}>Collect fees</Btn>
         </>}
       >
         {/* Hero */}
@@ -1181,6 +1204,24 @@ const HA3Detail = () => {
           onClose={() => setShowGenFees(false)}
           onGenerated={() => setFeeReload((n) => n + 1)}
         />
+      )}
+      {showPromote && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <PromoteStudentsModal onClose={() => setShowPromote(false)} onSaved={() => loadStudent()} />
+        </div>
+      )}
+      {showDelete && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+          <ConfirmModal
+            title="Delete student?"
+            message={`This hides ${s.name} from active lists but keeps their records. You can reactivate them later from the Students list.`}
+            confirmLabel="Delete"
+            busy={delBusy}
+            error={delErr}
+            onConfirm={confirmDelete}
+            onCancel={() => setShowDelete(false)}
+          />
+        </div>
       )}
     </>
   );

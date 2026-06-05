@@ -635,20 +635,26 @@ const RecentPaymentsTab = ({ onViewHistory }) => {
       {!loading && !error && rows.length === 0 && <div style={{ padding: '40px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No payments yet.</div>}
       {!loading && !error && rows.map((r, i) => (
         <div key={r.id} className="hf-row hf-clickable" onClick={() => onViewHistory?.(r.student_id)} style={{
-          display: 'grid', gridTemplateColumns: '1.3fr 1.2fr 90px 80px 1fr 110px 34px',
-          padding: '11px 18px', alignItems: 'center',
+          padding: '11px 18px',
           borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
           opacity: r.status === 'reversed' ? 0.55 : 1,
         }}>
-          <div style={{ ...hfText.small, fontWeight: 600 }}>{r.student_name || '—'}</div>
-          <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(r.fee_type)} · {monthName(r.month)}</div>
-          <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{r.amount}</div>
-          <div>{modePill(r.payment_mode)}</div>
-          <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{r.receipt_no}{r.status === 'reversed' ? ' (reversed)' : ''}</div>
-          <div style={{ textAlign: 'right', ...hfText.small, color: hf.muted }}>{r.paid_at ? new Date(r.paid_at).toLocaleString() : '—'}</div>
-          <div style={{ textAlign: 'right' }}>
-            <button onClick={(e) => { e.stopPropagation(); printReceipt(r); }} className="hf-btn" title="Print receipt" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.receipt}</button>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1.2fr 90px 80px 1fr 110px 34px', alignItems: 'center' }}>
+            <div style={{ ...hfText.small, fontWeight: 600 }}>{r.student_name || '—'}</div>
+            <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(r.fee_type)} · {monthName(r.month)}</div>
+            <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{r.amount}</div>
+            <div>{modePill(r.payment_mode)}</div>
+            <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{r.receipt_no}{r.status === 'reversed' ? ' (reversed)' : ''}</div>
+            <div style={{ textAlign: 'right', ...hfText.small, color: hf.muted }}>{r.paid_at ? new Date(r.paid_at).toLocaleString() : '—'}</div>
+            <div style={{ textAlign: 'right' }}>
+              <button onClick={(e) => { e.stopPropagation(); printReceipt(r); }} className="hf-btn" title="Print receipt" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.receipt}</button>
+            </div>
           </div>
+          {r.notes && (
+            <div style={{ ...hfText.small, color: hf.muted, marginTop: 5, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
+              <span style={{ color: hf.faint }}>Note: </span>{r.notes}
+            </div>
+          )}
         </div>
       ))}
       {!loading && !error && rows.length > 0 && <TabPager page={page} totalPages={totalPages} onPage={setPage} />}
@@ -745,19 +751,25 @@ const PaymentHistoryTab = ({ studentId }) => {
           {!loading && rows.length === 0 && <div style={{ padding: '30px 18px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No payments recorded for this student.</div>}
           {!loading && rows.map((r, i) => (
             <div key={r.id} style={{
-              display: 'grid', gridTemplateColumns: '1.2fr 90px 80px 1fr 110px 34px',
-              padding: '11px 18px', alignItems: 'center',
+              padding: '11px 18px',
               borderBottom: i < rows.length - 1 ? `1px solid ${hf.borderS}` : 'none',
               opacity: r.status === 'reversed' ? 0.55 : 1,
             }}>
-              <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(r.fee_type)} · {monthName(r.month)}</div>
-              <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{r.amount}</div>
-              <div>{modePill(r.payment_mode)}</div>
-              <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{r.receipt_no}{r.status === 'reversed' ? ' (reversed)' : ''}</div>
-              <div style={{ textAlign: 'right', ...hfText.small, color: hf.muted }}>{r.paid_at ? new Date(r.paid_at).toLocaleString() : '—'}</div>
-              <div style={{ textAlign: 'right' }}>
-                <button onClick={(e) => { e.stopPropagation(); printReceipt({ ...r, student_id: student?.id, student_name: student?.name }); }} className="hf-btn" title="Print receipt" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.receipt}</button>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 90px 80px 1fr 110px 34px', alignItems: 'center' }}>
+                <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(r.fee_type)} · {monthName(r.month)}</div>
+                <div style={{ ...hfText.num, fontSize: 12, fontWeight: 700 }}>₹{r.amount}</div>
+                <div>{modePill(r.payment_mode)}</div>
+                <div style={{ ...hfText.num, fontSize: 11, color: hf.muted }}>{r.receipt_no}{r.status === 'reversed' ? ' (reversed)' : ''}</div>
+                <div style={{ textAlign: 'right', ...hfText.small, color: hf.muted }}>{r.paid_at ? new Date(r.paid_at).toLocaleString() : '—'}</div>
+                <div style={{ textAlign: 'right' }}>
+                  <button onClick={(e) => { e.stopPropagation(); printReceipt({ ...r, student_id: student?.id, student_name: student?.name }); }} className="hf-btn" title="Print receipt" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.receipt}</button>
+                </div>
               </div>
+              {r.notes && (
+                <div style={{ ...hfText.small, color: hf.muted, marginTop: 5, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>
+                  <span style={{ color: hf.faint }}>Note: </span>{r.notes}
+                </div>
+              )}
             </div>
           ))}
           {!loading && rows.length > 0 && <TabPager page={page} totalPages={totalPages} onPage={setPage} />}
