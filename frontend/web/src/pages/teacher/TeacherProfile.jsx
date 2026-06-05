@@ -5,6 +5,7 @@ import { Card, Btn, Avatar, FInput } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch } from '@/lib/api';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { EnableNotifications } from '@/components/EnableNotifications';
 
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 const dash = (v) => (v === null || v === undefined || v === '' ? '—' : v);
@@ -178,6 +179,8 @@ export default function TeacherProfile() {
   return (
     <TeacherChrome active="Profile" title="Profile" breadcrumb="Home">
       <ProfileDetails teacher={teacher} loading={loading} error={error} onRetry={load} user={user} school={school} />
+      {/* Notifications toggle (always shows current state here; on/off control). */}
+      <EnableNotifications variant="row" />
       <ChangePasswordForm />
     </TeacherChrome>
   );

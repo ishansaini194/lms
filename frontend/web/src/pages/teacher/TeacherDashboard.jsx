@@ -7,6 +7,7 @@ import { Card, Pill, Btn, Stat } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch } from '@/lib/api';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { EnableNotifications } from '@/components/EnableNotifications';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -245,6 +246,9 @@ export default function TeacherDashboard() {
 
     body = (
       <>
+        {/* Gentle, tap-to-enable push banner (hidden when unsupported/on/blocked). */}
+        <EnableNotifications variant="banner" />
+
         {/* Stat row */}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 14 }}>
           <Stat label="Classes I teach" value={responsibilities.length} icon={I.grid}

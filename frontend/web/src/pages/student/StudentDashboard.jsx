@@ -7,7 +7,7 @@ import { Card, Pill, Btn } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money } from '@/lib/studentFees';
 import { useIsMobile } from '@/lib/useIsMobile';
-import { EnableNotifications } from '@/components/student/EnableNotifications';
+import { EnableNotifications } from '@/components/EnableNotifications';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 

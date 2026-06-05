@@ -114,6 +114,30 @@ func (h *NoticesHandler) enrichNotices(schoolID uint, notices []models.Notice) [
 	return items
 }
 
+// teacherVisibilityCond returns the grouped OR condition for "notices a teacher
+// may see": posted by them, school-wide, or targeting a class_year they are the
+// class teacher of. It is returned as a sub-*gorm.DB so GORM parenthesizes the
+// whole OR group, keeping it ANDed under the outer notices.school_id tenant
+// scope (see the DryRun in the handoff — a raw "a OR b OR c" string Where would
+// NOT be auto-parenthesized and would flatten into a cross-tenant OR).
+func (h *NoticesHandler) teacherVisibilityCond(c *fiber.Ctx, schoolID uint) *gorm.DB {
+	userID := middleware.GetUserID(c)
+	teacherID := middleware.GetTeacherID(c)
+
+	// Notices targeting a class_year this teacher is the class teacher of.
+	// School-scoped on its own so the IN-set can never reach across tenants.
+	classTeacherNotices := h.DB.
+		Table("notice_targets AS nt").
+		Select("nt.notice_id").
+		Joins("JOIN class_years cy ON cy.id = nt.class_year_id").
+		Where("cy.class_teacher_id = ? AND cy.school_id = ?", teacherID, schoolID)
+
+	return h.DB.
+		Where("notices.posted_by_id = ?", userID).
+		Or("notices.target_all_school = ?", true).
+		Or("notices.id IN (?)", classTeacherNotices)
+}
+
 // GET /api/notices?include_inactive=&class_year_id=
 func (h *NoticesHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
@@ -125,7 +149,7 @@ func (h *NoticesHandler) List(c *fiber.Ctx) error {
 		query = query.Where("notices.is_active = ?", true)
 	}
 	if isTeacher(c) {
-		query = query.Where("notices.posted_by_id = ?", middleware.GetUserID(c))
+		query = query.Where(h.teacherVisibilityCond(c, schoolID))
 	}
 
 	// Filter to notices visible to a class_year: either school-wide, or targeted at it.
@@ -161,7 +185,17 @@ func (h *NoticesHandler) GetOne(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 	if isTeacher(c) {
-		if notice.PostedByID != middleware.GetUserID(c) {
+		// A teacher may view a notice that is relevant to them — same three
+		// conditions as the List feed (posted by them, school-wide, or
+		// targeting a class they're the class teacher of). Else 404.
+		var visible int64
+		if err := h.DB.Model(&models.Notice{}).
+			Where("notices.id = ? AND notices.school_id = ?", notice.ID, schoolID).
+			Where(h.teacherVisibilityCond(c, schoolID)).
+			Count(&visible).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+		}
+		if visible == 0 {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notice not found"})
 		}
 	}

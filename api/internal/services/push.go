@@ -76,57 +76,62 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 		return
 	}
 
-	// 2. Resolve target student IDs (school-wide or via target class-years).
-	studentIDs, err := noticeTargetStudentIDs(db, schoolID, &notice)
+	// 2. Resolve recipient subscriptions, per role, each with the URL its portal
+	// should open. Students/parents always; teachers only for ADMIN-posted notices
+	// (a teacher's own class notice still reaches students/parents only — it never
+	// pushes to other teachers). We do NOT early-return on an empty student set: a
+	// school-wide admin notice with teachers subscribed but no students must still
+	// reach those teachers.
+	recipients := map[uint]recipient{} // keyed by subscription id → de-dupes
+
+	// --- Students/parents (existing path) ---
+	studentSubs, err := studentNoticeSubs(db, schoolID, &notice)
 	if err != nil {
-		log.Printf("[push] notice %d: failed resolving target students: %v", noticeID, err)
+		log.Printf("[push] notice %d: failed resolving student subscriptions: %v", noticeID, err)
 		return
 	}
-	if len(studentIDs) == 0 {
+	for i := range studentSubs {
+		recipients[studentSubs[i].ID] = recipient{sub: studentSubs[i], url: "/student/notices", isTeacher: false}
+	}
+
+	// --- Teachers (admin notices only) ---
+	if noticeReachesTeachers(db, schoolID, &notice) {
+		teacherSubs, err := teacherNoticeSubs(db, schoolID, &notice)
+		if err != nil {
+			log.Printf("[push] notice %d: failed resolving teacher subscriptions: %v", noticeID, err)
+			return
+		}
+		for i := range teacherSubs {
+			// Skip if this exact subscription is already a student recipient (a
+			// shared device endpoint maps to one row, so this is belt-and-braces).
+			if _, dup := recipients[teacherSubs[i].ID]; dup {
+				continue
+			}
+			recipients[teacherSubs[i].ID] = recipient{sub: teacherSubs[i], url: "/teacher/notices", isTeacher: true}
+		}
+	}
+
+	if len(recipients) == 0 {
 		return
 	}
 
-	// 3. student_id → student user → push_subscriptions, all batched (no N+1).
-	var userIDs []uint
-	if err := db.Model(&models.User{}).
-		Where("school_id = ? AND role = ? AND is_active = ? AND student_id IN ?",
-			schoolID, "student", true, studentIDs).
-		Pluck("id", &userIDs).Error; err != nil {
-		log.Printf("[push] notice %d: failed resolving student users: %v", noticeID, err)
-		return
-	}
-	if len(userIDs) == 0 {
-		return
-	}
+	// 3. Send to each subscription with its per-role URL; clean dead ones (410/404).
+	var sentStudents, sentTeachers, failed, cleaned int
+	for _, r := range recipients {
+		payload, err := json.Marshal(pushPayload{
+			Title: notice.Title,
+			Body:  snippet(notice.Body, 140),
+			URL:   r.url,
+		})
+		if err != nil {
+			failed++
+			log.Printf("[push] notice %d: failed marshaling payload (sub %d): %v", noticeID, r.sub.ID, err)
+			continue
+		}
 
-	var subs []models.PushSubscription
-	if err := db.Where("school_id = ? AND user_id IN ?", schoolID, userIDs).
-		Find(&subs).Error; err != nil {
-		log.Printf("[push] notice %d: failed loading subscriptions: %v", noticeID, err)
-		return
-	}
-	if len(subs) == 0 {
-		return
-	}
-
-	// 4. Build the payload once.
-	payload, err := json.Marshal(pushPayload{
-		Title: notice.Title,
-		Body:  snippet(notice.Body, 140),
-		URL:   "/student/notices",
-	})
-	if err != nil {
-		log.Printf("[push] notice %d: failed marshaling payload: %v", noticeID, err)
-		return
-	}
-
-	// 5. Send to each subscription; clean dead ones (410 Gone / 404).
-	var sent, failed, cleaned int
-	for i := range subs {
-		sub := subs[i]
 		resp, err := webpush.SendNotification(payload, &webpush.Subscription{
-			Endpoint: sub.Endpoint,
-			Keys:     webpush.Keys{P256dh: sub.P256dh, Auth: sub.Auth},
+			Endpoint: r.sub.Endpoint,
+			Keys:     webpush.Keys{P256dh: r.sub.P256dh, Auth: r.sub.Auth},
 		}, &webpush.Options{
 			Subscriber:      pushCfg.contact,
 			VAPIDPublicKey:  pushCfg.publicKey,
@@ -135,7 +140,7 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 		})
 		if err != nil {
 			failed++
-			log.Printf("[push] notice %d: send error (sub %d): %v", noticeID, sub.ID, err)
+			log.Printf("[push] notice %d: send error (sub %d): %v", noticeID, r.sub.ID, err)
 			continue
 		}
 		status := resp.StatusCode
@@ -144,19 +149,126 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 		switch {
 		case status == 410 || status == 404:
 			// Expired/unsubscribed endpoint → remove the stale row.
-			if delErr := db.Where("id = ?", sub.ID).Delete(&models.PushSubscription{}).Error; delErr == nil {
+			if delErr := db.Where("id = ?", r.sub.ID).Delete(&models.PushSubscription{}).Error; delErr == nil {
 				cleaned++
 			} else {
-				log.Printf("[push] notice %d: failed cleaning dead sub %d: %v", noticeID, sub.ID, delErr)
+				log.Printf("[push] notice %d: failed cleaning dead sub %d: %v", noticeID, r.sub.ID, delErr)
 			}
 		case status >= 200 && status < 300:
-			sent++
+			if r.isTeacher {
+				sentTeachers++
+			} else {
+				sentStudents++
+			}
 		default:
 			failed++
-			log.Printf("[push] notice %d: non-2xx (sub %d): %d", noticeID, sub.ID, status)
+			log.Printf("[push] notice %d: non-2xx (sub %d): %d", noticeID, r.sub.ID, status)
 		}
 	}
-	log.Printf("[push] notice %d: sent %d, failed %d, cleaned %d", noticeID, sent, failed, cleaned)
+	log.Printf("[push] notice %d: sent %d (students %d, teachers %d), failed %d, cleaned %d",
+		noticeID, sentStudents+sentTeachers, sentStudents, sentTeachers, failed, cleaned)
+}
+
+// recipient pairs a subscription with the URL its portal should open and whether
+// it belongs to a teacher (for the per-role send counters).
+type recipient struct {
+	sub       models.PushSubscription
+	url       string
+	isTeacher bool
+}
+
+// studentNoticeSubs resolves the push_subscriptions of students/parents a notice
+// reaches: target students → their active student-role users → subscriptions.
+// School-scoped, batched (no N+1). Empty (not an error) when nobody matches.
+func studentNoticeSubs(db *gorm.DB, schoolID uint, notice *models.Notice) ([]models.PushSubscription, error) {
+	studentIDs, err := noticeTargetStudentIDs(db, schoolID, notice)
+	if err != nil || len(studentIDs) == 0 {
+		return nil, err
+	}
+
+	var userIDs []uint
+	if err := db.Model(&models.User{}).
+		Where("school_id = ? AND role = ? AND is_active = ? AND student_id IN ?",
+			schoolID, "student", true, studentIDs).
+		Pluck("id", &userIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+
+	var subs []models.PushSubscription
+	err = db.Where("school_id = ? AND user_id IN ?", schoolID, userIDs).Find(&subs).Error
+	return subs, err
+}
+
+// noticeReachesTeachers reports whether a notice should push to teachers at all:
+// only ADMIN-posted notices reach teachers (matching the Stage A rule that admin
+// notices reach teachers, while teacher-posted notices stay students/parents
+// only). Resolved from the poster's role, school-scoped.
+func noticeReachesTeachers(db *gorm.DB, schoolID uint, notice *models.Notice) bool {
+	var role string
+	if err := db.Model(&models.User{}).
+		Where("id = ? AND school_id = ?", notice.PostedByID, schoolID).
+		Pluck("role", &role).Error; err != nil {
+		log.Printf("[push] notice %d: failed resolving poster role: %v", notice.ID, err)
+		return false
+	}
+	return role == "admin"
+}
+
+// teacherNoticeSubs resolves the push_subscriptions of teachers a notice reaches,
+// mirroring Stage A's display targeting EXACTLY:
+//   - school-wide → all active teacher-role users in the school;
+//   - class notice → the class teacher(s) of the targeted class-years only
+//     (class_years.class_teacher_id; NOT subject teachers).
+//
+// Tenant safety: two simple, separately school-scoped queries — no OR, nothing to
+// flatten (the Stage A lesson: a raw-string OR ANDed with school_id leaks across
+// tenants). School-scoped, batched.
+func teacherNoticeSubs(db *gorm.DB, schoolID uint, notice *models.Notice) ([]models.PushSubscription, error) {
+	userIDs, err := noticeTargetTeacherUserIDs(db, schoolID, notice)
+	if err != nil || len(userIDs) == 0 {
+		return nil, err
+	}
+	var subs []models.PushSubscription
+	err = db.Where("school_id = ? AND user_id IN ?", schoolID, userIDs).Find(&subs).Error
+	return subs, err
+}
+
+// noticeTargetTeacherUserIDs returns the active teacher-role user IDs a notice
+// reaches. School-scoped, batched, no OR.
+func noticeTargetTeacherUserIDs(db *gorm.DB, schoolID uint, notice *models.Notice) ([]uint, error) {
+	var userIDs []uint
+
+	if notice.TargetAllSchool {
+		// All active teacher-role users in the school.
+		err := db.Model(&models.User{}).
+			Where("school_id = ? AND role = ? AND is_active = ?", schoolID, "teacher", true).
+			Pluck("id", &userIDs).Error
+		return userIDs, err
+	}
+
+	// Class teacher(s) of the notice's target class-years (school-scoped).
+	var teacherIDs []uint
+	if err := db.Model(&models.ClassYear{}).
+		Joins("JOIN notice_targets nt ON nt.class_year_id = class_years.id").
+		Where("nt.notice_id = ? AND class_years.school_id = ? AND class_years.class_teacher_id IS NOT NULL",
+			notice.ID, schoolID).
+		Distinct("class_years.class_teacher_id").
+		Pluck("class_years.class_teacher_id", &teacherIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(teacherIDs) == 0 {
+		return nil, nil
+	}
+
+	// Those teachers → their active teacher-role users (school-scoped).
+	err := db.Model(&models.User{}).
+		Where("school_id = ? AND role = ? AND is_active = ? AND teacher_id IN ?",
+			schoolID, "teacher", true, teacherIDs).
+		Pluck("id", &userIDs).Error
+	return userIDs, err
 }
 
 // noticeTargetStudentIDs returns the distinct active-student IDs a notice

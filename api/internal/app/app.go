@@ -288,7 +288,13 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	me.Get("/assessment-marks", studentPortalHandler.AssessmentMarks)
 	me.Get("/library", studentPortalHandler.Library)
 	me.Get("/library/:id/download", studentPortalHandler.LibraryDownload)
-	// Web Push: save/remove this student's device subscription (student-gated).
-	me.Post("/push-subscription", studentPortalHandler.SavePushSubscription)
-	me.Delete("/push-subscription", studentPortalHandler.DeletePushSubscription)
+
+	// Web Push device subscriptions — shared by students AND teachers. The handler
+	// keys on the JWT's user_id (role-agnostic, stores by user), so the same path
+	// serves both portals and the shared frontend lib/push.js needs no change.
+	// Registered outside the student-only /me group so teachers aren't blocked by
+	// its RequireRole("student") gate.
+	pushSubMW := []fiber.Handler{middleware.AuthRequired(), middleware.RequireRole("student", "teacher")}
+	api.Post("/me/push-subscription", append(pushSubMW, studentPortalHandler.SavePushSubscription)...)
+	api.Delete("/me/push-subscription", append(pushSubMW, studentPortalHandler.DeletePushSubscription)...)
 }

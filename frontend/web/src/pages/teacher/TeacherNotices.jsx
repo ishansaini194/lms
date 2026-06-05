@@ -4,6 +4,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, ModalShell, FInput, FTextarea } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { useAuth } from '@/auth/AuthContext';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -71,22 +72,36 @@ const Overlay = ({ onClose, children }) => (
   </div>
 );
 
-const NoticeRow = ({ n, labelByCY, onEdit, onDelete }) => {
+// A small attribution chip for notices the teacher didn't post (they reach her
+// because they're school-wide or target a class she's the class teacher of).
+const FromChip = ({ name, schoolWide }) => (
+  <span style={{
+    padding: '2px 9px', borderRadius: 6, background: hf.primarySoft, color: hf.primary,
+    border: `1px solid ${hf.primary}`, fontFamily: hfFonts.ui, fontSize: 11, fontWeight: 650,
+    letterSpacing: '-0.01em', whiteSpace: 'nowrap',
+  }}>{schoolWide ? 'School-wide' : 'From admin'}{name ? ` · ${name}` : ''}</span>
+);
+
+const NoticeRow = ({ n, mine, labelByCY, onEdit, onDelete }) => {
   const labels = (n.class_year_ids || []).map(id => labelByCY[id] || `Class ${id}`);
   return (
-    <Card padding={0} style={{ borderLeft: `3px solid ${hf.accent}`, borderTopLeftRadius: 12, borderBottomLeftRadius: 12 }}>
+    <Card padding={0} style={{ borderLeft: `3px solid ${mine ? hf.accent : hf.primary}`, borderTopLeftRadius: 12, borderBottomLeftRadius: 12 }}>
       <div style={{ padding: '14px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 4 }}>
+              {!mine && <FromChip name={n.posted_by_name} schoolWide={n.target_all_school} />}
               {labels.map((l, i) => <ClassChip key={i} label={l} />)}
             </div>
             <div style={{ ...hfText.h2, fontSize: 15, lineHeight: 1.3 }}>{n.title}</div>
           </div>
-          <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-            <Btn variant="ghost" size="sm" onClick={onEdit}>Edit</Btn>
-            <Btn variant="ghost" size="sm" onClick={onDelete}>Delete</Btn>
-          </div>
+          {/* Edit/Delete only for notices this teacher authored — others are read-only. */}
+          {mine && (
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <Btn variant="ghost" size="sm" onClick={onEdit}>Edit</Btn>
+              <Btn variant="ghost" size="sm" onClick={onDelete}>Delete</Btn>
+            </div>
+          )}
         </div>
         <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5, marginBottom: 8 }}>{truncate(n.body)}</div>
         <div style={{ ...hfText.small, fontSize: 11, color: hf.muted }}>{timeAgo(n.created_at)}</div>
@@ -231,6 +246,7 @@ const PageError = ({ message, onRetry }) => (
 
 export default function TeacherNotices() {
   const isMobile = useIsMobile();
+  const { user } = useAuth();
   const [list, setList] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -301,6 +317,7 @@ export default function TeacherNotices() {
           <NoticeRow
             key={n.id}
             n={n}
+            mine={n.posted_by_id === user?.id}
             labelByCY={labelByCY}
             onEdit={() => setEditing(n)}
             onDelete={() => { setDelErr(''); setDeleting(n); }}

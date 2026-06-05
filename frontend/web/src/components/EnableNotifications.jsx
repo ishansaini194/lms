@@ -2,6 +2,10 @@
 // auto-prompt). Permission is requested ONLY on the user's tap. Renders nothing
 // on unsupported browsers or when no VAPID key is configured.
 //
+// Role-agnostic — used by both the student and teacher portals. lib/push.js posts
+// to /api/me/push-subscription, which is gated for students AND teachers and keys
+// the row by the JWT's user_id, so the same control works for either role.
+//
 // Two variants:
 //   - "banner" (Dashboard): shows only while actionable (can enable); hides once
 //     on or blocked, so it never nags.
