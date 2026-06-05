@@ -8,6 +8,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
+	"github.com/ishansaini194/lms/api/internal/services"
 	"gorm.io/gorm"
 )
 
@@ -231,6 +232,11 @@ func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create notice"})
 	}
+
+	// Fire-and-forget Web Push to the notice's targeted students. Captures plain
+	// values + the *gorm.DB (never the Fiber context, which dies with the
+	// request); a push failure cannot affect this already-committed response.
+	go services.SendNoticePush(h.DB, schoolID, notice.ID)
 
 	return c.Status(fiber.StatusCreated).JSON(noticeResponse{Notice: notice, ClassYearIDs: body.ClassYearIDs})
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/ishansaini194/lms/api/internal/handlers"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/server"
+	"github.com/ishansaini194/lms/api/internal/services"
 	"gorm.io/gorm"
 )
 
@@ -20,6 +21,9 @@ func New() (*server.Server, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Read VAPID config once at startup (logs + disables push gracefully if unset).
+	services.InitPush()
 
 	srv := server.New(db)
 	registerRoutes(srv, db)
