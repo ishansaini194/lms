@@ -47,6 +47,7 @@ export function AuthProvider({ children }) {
 
   const login = async (credentials) => {
     const res = await apiLogin(credentials);
+    setToken(res.token);
     setTok(res.token);
     setUser(res.user);
     setSchool(res.school || null);
@@ -54,6 +55,7 @@ export function AuthProvider({ children }) {
   };
 
   const logout = () => {
+    setToken(null);
     setTok(null);
     setUser(null);
     setSchool(null);
