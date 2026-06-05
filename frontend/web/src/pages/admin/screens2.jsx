@@ -934,6 +934,19 @@ const ReceiptPanel = ({ receipt, student, fee, onAnother }) => {
 const TeacherDetailsModal = ({ teacher, onClose }) => {
   const username = teacher?.username || '';
   const classLabels = teacher?.class_teacher_of || [];
+
+  // Subjects this teacher teaches this year (subject + class), beyond the
+  // single class-teacher role above. Fetched lazily when the card opens.
+  const [assignments, setAssignments] = useState([]);
+  useEffect(() => {
+    if (!teacher?.id) return;
+    let alive = true;
+    apiFetch(`/api/teaching-assignments?teacher_id=${teacher.id}`)
+      .then((data) => { if (alive) setAssignments(Array.isArray(data) ? data : []); })
+      .catch(() => { if (alive) setAssignments([]); });
+    return () => { alive = false; };
+  }, [teacher?.id]);
+
   const Detail = ({ label, value, mono }) => (
     <div>
       <div style={{ ...hfText.micro, fontSize: 10 }}>{label}</div>
@@ -989,6 +1002,22 @@ const TeacherDetailsModal = ({ teacher, onClose }) => {
                 ? classLabels.map((label) => <Pill key={label} tone="primary">{label}</Pill>)
                 : <span style={{ ...hfText.small, color: hf.faint }}>—</span>}
             </div>
+          </div>
+
+          <div>
+            <div style={{ ...hfText.micro, fontSize: 10, marginBottom: 7 }}>Subjects taught</div>
+            {assignments.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {assignments.map((a) => (
+                  <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <ClassChip cls={a.class_label} />
+                    <span style={{ ...hfText.small, fontWeight: 600, color: hf.ink }}>{a.subject}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <span style={{ ...hfText.small, color: hf.faint }}>—</span>
+            )}
           </div>
         </ModalShell>
       </div>
