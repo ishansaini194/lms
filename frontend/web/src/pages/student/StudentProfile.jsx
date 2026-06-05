@@ -6,6 +6,7 @@ import { Card, Pill, Btn, Avatar } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money, feeLabel } from '@/lib/studentFees';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { EnableNotifications } from '@/components/student/EnableNotifications';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -175,6 +176,9 @@ export default function StudentProfile() {
             <Pill tone={p.is_active ? 'good' : 'neutral'} dot>{p.is_active ? 'Active' : 'Inactive'}</Pill>
           </div>
         </Card>
+
+        {/* Notifications toggle (always shows current state here; on/off control). */}
+        <EnableNotifications variant="row" />
 
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14, alignItems: 'start' }}>
           {/* Student details */}

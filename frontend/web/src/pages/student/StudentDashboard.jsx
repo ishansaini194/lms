@@ -7,6 +7,7 @@ import { Card, Pill, Btn } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money } from '@/lib/studentFees';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { EnableNotifications } from '@/components/student/EnableNotifications';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -231,6 +232,9 @@ export default function StudentDashboard() {
             Here's your homework, school notices, and fees at a glance.
           </div>
         </Card>
+
+        {/* Gentle, tap-to-enable push banner (hidden when unsupported/on/blocked). */}
+        <EnableNotifications variant="banner" />
 
         {/* Three clickable summary cards — stacked full-width on mobile. */}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14, alignItems: 'start' }}>
