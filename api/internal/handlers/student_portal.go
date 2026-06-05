@@ -12,7 +12,91 @@ import (
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+// ── Web Push subscriptions ──────────────────────────────────────────────────
+// Body shape mirrors the browser's PushSubscription.toJSON().
+type pushSubscriptionRequest struct {
+	Endpoint string `json:"endpoint"`
+	Keys     struct {
+		P256dh string `json:"p256dh"`
+		Auth   string `json:"auth"`
+	} `json:"keys"`
+}
+
+type pushUnsubscribeRequest struct {
+	Endpoint string `json:"endpoint"`
+}
+
+// POST /api/me/push-subscription
+// Saves (upserts) the logged-in student's Web Push subscription. user_id and
+// school_id come from the JWT, never the body — a student can only subscribe
+// themselves. Upsert on the unique endpoint so re-subscribing the same device
+// updates rather than duplicating or 409-failing.
+func (h *StudentPortalHandler) SavePushSubscription(c *fiber.Ctx) error {
+	userID := middleware.GetUserID(c)
+	schoolID := middleware.GetSchoolID(c)
+	if userID == 0 || schoolID == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not authenticated"})
+	}
+
+	var body pushSubscriptionRequest
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	}
+	endpoint := strings.TrimSpace(body.Endpoint)
+	p256dh := strings.TrimSpace(body.Keys.P256dh)
+	auth := strings.TrimSpace(body.Keys.Auth)
+	if endpoint == "" || p256dh == "" || auth == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "endpoint, keys.p256dh and keys.auth are required"})
+	}
+
+	sub := models.PushSubscription{
+		SchoolID: schoolID,
+		UserID:   userID,
+		Endpoint: endpoint,
+		P256dh:   p256dh,
+		Auth:     auth,
+	}
+	// On endpoint conflict, reassign ownership + refresh keys/updated_at.
+	if err := h.DB.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "endpoint"}},
+		DoUpdates: clause.AssignmentColumns([]string{"school_id", "user_id", "p256dh", "auth", "updated_at"}),
+	}).Create(&sub).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save subscription"})
+	}
+	return c.JSON(fiber.Map{"message": "subscription saved"})
+}
+
+// DELETE /api/me/push-subscription
+// Removes the subscription for a given endpoint (from the body or ?endpoint=),
+// scoped to the JWT's user_id so a student can only delete their own. Idempotent
+// — returns 200 even if nothing matched.
+func (h *StudentPortalHandler) DeletePushSubscription(c *fiber.Ctx) error {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not authenticated"})
+	}
+
+	endpoint := strings.TrimSpace(c.Query("endpoint"))
+	if endpoint == "" {
+		var body pushUnsubscribeRequest
+		if err := c.BodyParser(&body); err == nil {
+			endpoint = strings.TrimSpace(body.Endpoint)
+		}
+	}
+	if endpoint == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "endpoint is required"})
+	}
+
+	if err := h.DB.
+		Where("user_id = ? AND endpoint = ?", userID, endpoint).
+		Delete(&models.PushSubscription{}).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete subscription"})
+	}
+	return c.JSON(fiber.Map{"message": "subscription removed"})
+}
 
 type StudentPortalHandler struct {
 	DB             *gorm.DB

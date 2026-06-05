@@ -108,6 +108,28 @@ CREATE TABLE
         )
     );
 
+-- push_subscriptions
+-- Web Push subscriptions, one row per device/browser endpoint. Endpoint is
+-- unique so re-subscribing the same device upserts (never duplicates). Owned by
+-- a user; CASCADE so deactivating/deleting a user drops their subscriptions.
+-- Used to send notifications in a later stage.
+CREATE TABLE
+    push_subscriptions (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        user_id BIGINT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
+        p256dh TEXT NOT NULL,
+        auth TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (endpoint)
+    );
+
+CREATE INDEX idx_push_subscriptions_user ON push_subscriptions (user_id);
+
+CREATE INDEX idx_push_subscriptions_school ON push_subscriptions (school_id);
+
 -- classes
 CREATE TABLE
     classes (

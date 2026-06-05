@@ -284,4 +284,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	me.Get("/assessment-marks", studentPortalHandler.AssessmentMarks)
 	me.Get("/library", studentPortalHandler.Library)
 	me.Get("/library/:id/download", studentPortalHandler.LibraryDownload)
+	// Web Push: save/remove this student's device subscription (student-gated).
+	me.Post("/push-subscription", studentPortalHandler.SavePushSubscription)
+	me.Delete("/push-subscription", studentPortalHandler.DeletePushSubscription)
 }
