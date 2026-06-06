@@ -185,7 +185,7 @@ export const boards = [
   { value: '',     label: 'Select…' },
   { value: 'CBSE', label: 'CBSE' },
   { value: 'ICSE', label: 'ICSE' },
-  { value: 'PSEB', label: 'PSEB (Punjab)' },
+  { value: 'PSEB', label: 'PSEB' },
   { value: 'ISC',  label: 'ISC' },
   { value: 'NIOS', label: 'NIOS' },
 ];

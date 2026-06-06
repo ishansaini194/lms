@@ -22,6 +22,7 @@ import TeacherLibrary from '@/pages/teacher/TeacherLibrary.jsx';
 // Student / parent portal.
 import StudentDashboard from '@/pages/student/StudentDashboard.jsx';
 import StudentHomework from '@/pages/student/StudentHomework.jsx';
+import StudentLibrary from '@/pages/student/StudentLibrary.jsx';
 import StudentNotices from '@/pages/student/StudentNotices.jsx';
 import StudentResults from '@/pages/student/StudentResults.jsx';
 import StudentProfile from '@/pages/student/StudentProfile.jsx';
@@ -85,6 +86,7 @@ function AppRoutes() {
       {/* Student / parent portal — gated behind auth + student role */}
       <Route path="/student" element={<ProtectedRoute role="student"><StudentDashboard /></ProtectedRoute>} />
       <Route path="/student/homework" element={<ProtectedRoute role="student"><StudentHomework /></ProtectedRoute>} />
+      <Route path="/student/library" element={<ProtectedRoute role="student"><StudentLibrary /></ProtectedRoute>} />
       <Route path="/student/notices" element={<ProtectedRoute role="student"><StudentNotices /></ProtectedRoute>} />
       <Route path="/student/results" element={<ProtectedRoute role="student"><StudentResults /></ProtectedRoute>} />
       <Route path="/student/profile" element={<ProtectedRoute role="student"><StudentProfile /></ProtectedRoute>} />

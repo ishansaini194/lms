@@ -383,7 +383,7 @@ const TeacherFormModal = ({ onClose, onSaved, initial }) => {
           <Row2>
             <div>
               <FieldLabel required>Phone</FieldLabel>
-              <FInput value={f.phone} onChange={set('phone')} placeholder="+91 …" />
+              <FInput value={f.phone} onChange={set('phone')} />
             </div>
             <div>
               <FieldLabel>Email</FieldLabel>
@@ -393,17 +393,17 @@ const TeacherFormModal = ({ onClose, onSaved, initial }) => {
           <Row2>
             <div>
               <FieldLabel required>Subject</FieldLabel>
-              <FInput value={f.subject} onChange={set('subject')} placeholder="e.g. English" />
+              <FInput value={f.subject} onChange={set('subject')} />
             </div>
             {isEdit ? (
               <div>
                 <FieldLabel>Qualification</FieldLabel>
-                <FInput value={f.qualification} onChange={set('qualification')} placeholder="e.g. M.A. English, B.Ed" />
+                <FInput value={f.qualification} onChange={set('qualification')} />
               </div>
             ) : (
               <div>
                 <FieldLabel required>Employee ID</FieldLabel>
-                <FInput value={f.employee_id} onChange={set('employee_id')} placeholder="EMP-009" />
+                <FInput value={f.employee_id} onChange={set('employee_id')} />
               </div>
             )}
           </Row2>
@@ -415,7 +415,7 @@ const TeacherFormModal = ({ onClose, onSaved, initial }) => {
               </div>
               <div>
                 <FieldLabel>Qualification</FieldLabel>
-                <FInput value={f.qualification} onChange={set('qualification')} placeholder="e.g. M.A. English, B.Ed" />
+                <FInput value={f.qualification} onChange={set('qualification')}  />
               </div>
             </Row2>
           )}

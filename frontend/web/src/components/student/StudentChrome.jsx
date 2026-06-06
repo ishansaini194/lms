@@ -20,11 +20,12 @@ const schoolInitials = (name) => {
 const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : '');
 
 const studentNav = [
-  { id: 'Dashboard', icon: I.home,  to: '/student',          enabled: true },
-  { id: 'Homework',  icon: I.book,  to: '/student/homework', enabled: true },
-  { id: 'Notices',   icon: I.bell,  to: '/student/notices',  enabled: true },
-  { id: 'Results',   icon: I.chart, to: '/student/results',  enabled: true },
-  { id: 'Profile',   icon: I.user,  to: '/student/profile',  enabled: true },
+  { id: 'Dashboard', icon: I.home,    to: '/student',          enabled: true },
+  { id: 'Homework',  icon: I.book,    to: '/student/homework', enabled: true },
+  { id: 'Library',   icon: I.library, to: '/student/library',  enabled: true },
+  { id: 'Notices',   icon: I.bell,    to: '/student/notices',  enabled: true },
+  { id: 'Results',   icon: I.chart,   to: '/student/results',  enabled: true },
+  { id: 'Profile',   icon: I.user,    to: '/student/profile',  enabled: true },
 ];
 
 const StudentSidebar = ({ active: activeProp }) => {
