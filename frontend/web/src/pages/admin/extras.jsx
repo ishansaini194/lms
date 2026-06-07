@@ -67,18 +67,25 @@ const StudentFormModal = ({ onClose, onSaved, initial }) => {
       if (!f.name || !f.phone) { setErr('Name and phone are required.'); return; }
       setSaving(true);
       try {
-        const body = { name: f.name, phone: f.phone };
-        if (f.gender) body.gender = f.gender;
+        // Send every editable field (not just the non-empty ones) so edits —
+        // including clearing a field back to blank — actually persist. dob is the
+        // exception: an empty string can't be parsed as a date, so it's only sent
+        // when set (clearing a date isn't supported by the API).
+        const body = {
+          name: f.name,
+          phone: f.phone,
+          gender: f.gender || '',
+          aadhar_no: f.aadhar_no || '',
+          father_name: f.father_name || '',
+          father_contact: f.father_contact || '',
+          mother_name: f.mother_name || '',
+          mother_contact: f.mother_contact || '',
+          caste: f.caste || '',
+          email: f.email || '',
+          address: f.address || '',
+          epunjab_id: f.epunjab_id || '',
+        };
         if (f.dob) body.dob = new Date(f.dob).toISOString();
-        if (f.aadhar_no) body.aadhar_no = f.aadhar_no;
-        if (f.father_name) body.father_name = f.father_name;
-        if (f.father_contact) body.father_contact = f.father_contact;
-        if (f.mother_name) body.mother_name = f.mother_name;
-        if (f.mother_contact) body.mother_contact = f.mother_contact;
-        if (f.caste) body.caste = f.caste;
-        if (f.email) body.email = f.email;
-        if (f.address) body.address = f.address;
-        if (f.epunjab_id) body.epunjab_id = f.epunjab_id;
         await apiFetch(`/api/students/${initial.id}`, { method: 'PUT', body });
         onSaved?.();
       } catch (e) {
