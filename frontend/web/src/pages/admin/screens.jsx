@@ -13,6 +13,7 @@ import {
   FieldLabel, TextInput, TextArea,
 } from '@/components/admin/AdminChrome';
 import { StudentFormModal, ClassFormModal, ConfirmModal, ClassYearSetupModal, AssignTeacherModal, HA6Modal } from '@/pages/admin/extras.jsx';
+import { ExportStudentsModal, ExportStudentModal } from '@/components/StudentExport.jsx';
 
 // Admin hi-fi · A1 Dashboard · A2 Classes · A3 Students · A3 Student detail
 
@@ -448,6 +449,7 @@ const HA3 = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const [showAdd, setShowAdd] = useState(false);
+  const [showExport, setShowExport] = useState(false);
 
   // Filters / pagination driving the list fetch.
   const [search, setSearch] = useState('');
@@ -582,8 +584,7 @@ const HA3 = () => {
         breadcrumb="Home · Students"
         title="Students"
         topRight={<>
-          <Btn variant="outline" size="sm">⚙ Columns</Btn>
-          <Btn variant="outline" size="sm" icon={I.download}>Import CSV</Btn>
+          <Btn variant="outline" size="sm" icon={I.download} onClick={() => setShowExport(true)}>Export</Btn>
           <Btn variant="primary" size="sm" onClick={() => setShowAdd(true)}>+ Add student</Btn>
         </>}
       >
@@ -689,6 +690,9 @@ const HA3 = () => {
           </div>
         </Card>
       </AdminChrome>
+      {showExport && (
+        <ExportStudentsModal classOptions={classOptions} onClose={() => setShowExport(false)} />
+      )}
       {showAdd && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
           <StudentFormModal
@@ -1025,6 +1029,7 @@ const HA3Detail = () => {
   const navigate = useNavigate();
   const [showEdit, setShowEdit] = useState(false);
   const [showGenFees, setShowGenFees] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
   const [delErr, setDelErr] = useState('');
@@ -1088,6 +1093,7 @@ const HA3Detail = () => {
         title={s.name}
         topRight={<>
           <Btn variant="outline" size="sm" onClick={() => setShowEdit(true)}>✎ Edit</Btn>
+          <Btn variant="outline" size="sm" icon={I.download} onClick={() => setShowExport(true)}>Export</Btn>
           <Btn variant="outline" size="sm" icon={I.arrUp} disabled title="Coming soon">Promote</Btn>
           <Btn variant="outline" size="sm" style={{ color: hf.accent, borderColor: hf.accentEdge }} onClick={() => { setDelErr(''); setShowDelete(true); }}>Delete</Btn>
           <Btn variant="outline" size="sm" icon={I.card} onClick={() => setShowGenFees(true)}>Generate fees</Btn>
@@ -1203,6 +1209,9 @@ const HA3Detail = () => {
           onClose={() => setShowGenFees(false)}
           onGenerated={() => setFeeReload((n) => n + 1)}
         />
+      )}
+      {showExport && (
+        <ExportStudentModal student={s} onClose={() => setShowExport(false)} />
       )}
       {showDelete && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>

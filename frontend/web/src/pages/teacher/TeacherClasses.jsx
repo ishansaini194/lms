@@ -5,6 +5,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, Avatar, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { ExportStudentsModal, ExportStudentModal, TEACHER_EXPORT_FIELDS } from '@/components/StudentExport.jsx';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -250,6 +251,86 @@ const PromoteModal = ({ sourceId, sourceLabel, onClose, onPromoted }) => {
   return <Overlay onClose={onClose}>{inner}</Overlay>;
 };
 
+// Read-only student profile (teacher view). Mirrors the admin detail page's
+// sections, minus fees/activity (teachers don't have fee access). Data is the
+// enrollment's preloaded student, so no extra fetch. Includes a single-student
+// Export action.
+const fmtDOB = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+};
+
+const ProfileRow = ({ label, value }) => (
+  <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: 10, padding: '8px 0', borderBottom: `1px solid ${hf.borderS}` }}>
+    <div style={{ ...hfText.small, color: hf.muted, fontWeight: 550 }}>{label}</div>
+    <div style={{ ...hfText.body, color: value ? hf.ink2 : hf.faint, overflowWrap: 'anywhere' }}>{value || '—'}</div>
+  </div>
+);
+
+const ProfileGroup = ({ title, children }) => (
+  <div>
+    <div style={{ ...hfText.micro, fontSize: 10, letterSpacing: '0.04em', marginBottom: 4 }}>{title}</div>
+    {children}
+  </div>
+);
+
+const StudentProfileModal = ({ student, onClose }) => {
+  const [exporting, setExporting] = useState(false);
+  const s = student || {};
+  return (
+    <Overlay onClose={onClose}>
+      <ModalShell
+        title="Student profile"
+        width={520}
+        footer={<>
+          <Btn variant="outline" size="md" onClick={() => setExporting(true)}>Export</Btn>
+          <div style={{ flex: 1 }} />
+          <Btn variant="primary" size="md" onClick={onClose}>Done</Btn>
+        </>}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <Avatar name={s.name || 'Student'} size={48} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ ...hfText.h2, fontSize: 18 }}>{s.name || 'Student'}</div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+              {s.class_label && <Pill tone="primary">{s.class_label}</Pill>}
+              {s.gender && <Pill tone="neutral">{s.gender}</Pill>}
+              {s.is_active === false && <Pill tone="neutral">Inactive</Pill>}
+            </div>
+          </div>
+        </div>
+
+        <ProfileGroup title="BASIC INFO">
+          <ProfileRow label="Phone" value={s.phone} />
+          <ProfileRow label="Email" value={s.email} />
+          <ProfileRow label="Gender" value={s.gender} />
+          <ProfileRow label="Date of birth" value={fmtDOB(s.dob)} />
+          <ProfileRow label="Caste" value={s.caste} />
+          <ProfileRow label="Address" value={s.address} />
+        </ProfileGroup>
+
+        <ProfileGroup title="ID DETAILS">
+          <ProfileRow label="Admission no." value={s.admission_no} />
+          <ProfileRow label="Aadhar" value={s.aadhar_no} />
+          <ProfileRow label="ePunjab ID" value={s.epunjab_id} />
+        </ProfileGroup>
+
+        <ProfileGroup title="PARENTS">
+          <ProfileRow label="Father" value={s.father_name} />
+          <ProfileRow label="Father contact" value={s.father_contact} />
+          <ProfileRow label="Mother" value={s.mother_name} />
+          <ProfileRow label="Mother contact" value={s.mother_contact} />
+        </ProfileGroup>
+      </ModalShell>
+
+      {exporting && (
+        <ExportStudentModal student={s} fields={TEACHER_EXPORT_FIELDS} onClose={() => setExporting(false)} />
+      )}
+    </Overlay>
+  );
+};
+
 const ClassCard = ({ cls, selected, onRoster, onAddHw, onAddNotice, onPromote }) => (
   <Card padding={16} style={{
     display: 'flex', flexDirection: 'column', gap: 12,
@@ -314,7 +395,7 @@ const COLS = [
   { key: 'epunjab_id', label: 'ePunjab' },
 ];
 
-const RosterTable = ({ rows, loading }) => {
+const RosterTable = ({ rows, loading, onView }) => {
   if (loading) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '6px 2px' }}>
@@ -348,7 +429,7 @@ const RosterTable = ({ rows, loading }) => {
           {rows.map((e) => {
             const s = e.student || {};
             return (
-              <tr key={e.id} style={{ borderBottom: `1px solid ${hf.borderS}` }}>
+              <tr key={e.id} className="hf-row hf-clickable" onClick={() => onView?.(e)} style={{ borderBottom: `1px solid ${hf.borderS}`, cursor: 'pointer' }}>
                 <td style={{ padding: '8px 10px' }}><Avatar name={s.name || '?'} size={28} /></td>
                 <td style={{ padding: '8px 10px', ...hfText.body, fontWeight: 600, color: hf.ink }}>{dash(s.name)}</td>
                 <td style={{ padding: '8px 10px', ...hfText.small, ...hfText.num, color: hf.inkSoft }}>{dash(s.admission_no)}</td>
@@ -406,6 +487,8 @@ export default function TeacherClasses() {
   const [search, setSearch] = useState('');
   const [noticeTarget, setNoticeTarget] = useState(null); // { id, label } | null
   const [promoteTarget, setPromoteTarget] = useState(null); // { id, label } | null
+  const [viewStudent, setViewStudent] = useState(null); // student object for the profile modal
+  const [exportingRoster, setExportingRoster] = useState(false);
   const [rosterRefresh, setRosterRefresh] = useState(0);
   const [toast, setToast] = useState('');
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 2600); };
@@ -426,6 +509,33 @@ export default function TeacherClasses() {
   useEffect(() => { loadClasses(); }, [loadClasses]);
 
   const classes = useMemo(() => buildClasses(responsibilities), [responsibilities]);
+
+  // Export wiring: the teacher's classes become the pickable export scope, and a
+  // class-year → label map lets the fetcher stamp each row with its class.
+  const exportClassOptions = useMemo(
+    () => classes.map((c) => ({ value: c.class_year_id, label: c.class_label })),
+    [classes],
+  );
+  const classLabelById = useMemo(
+    () => new Map(classes.map((c) => [String(c.class_year_id), c.class_label])),
+    [classes],
+  );
+  // Same signature ExportStudentsModal expects: (classYearId) → student rows.
+  // Reads the teacher-scoped /api/enrollments roster (paginated past the 100 cap).
+  const fetchTeacherStudents = useCallback(async (classYearId) => {
+    const label = classLabelById.get(String(classYearId)) || '';
+    let page = 1, totalPages = 1;
+    const out = [];
+    do {
+      const res = await apiFetch(`/api/enrollments?class_year_id=${classYearId}&status=active&limit=100&page=${page}`);
+      for (const e of (res?.data || [])) {
+        if (e.student) out.push({ ...e.student, class_label: label });
+      }
+      totalPages = res?.total_pages || 1;
+      page += 1;
+    } while (page <= totalPages);
+    return out;
+  }, [classLabelById]);
 
   // Pick the default class once classes are known: URL param → class-teacher → first.
   useEffect(() => {
@@ -509,18 +619,21 @@ export default function TeacherClasses() {
             <div style={{ padding: '13px 16px', borderBottom: `1px solid ${hf.borderS}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
               <div>
                 <div style={{ ...hfText.h2 }}>Students · {selectedClass.class_label}</div>
-                <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{rosterMeta.total} active students</div>
+                <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{rosterMeta.total} active students · tap a row to view profile</div>
               </div>
-              <input
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search by name…"
-                style={{
-                  width: isMobile ? '100%' : 220, padding: '8px 12px', background: hf.surface,
-                  border: `1px solid ${hf.border}`, borderRadius: 9, boxSizing: 'border-box',
-                  fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none',
-                }}
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', width: isMobile ? '100%' : 'auto' }}>
+                <input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name…"
+                  style={{
+                    width: isMobile ? '100%' : 220, padding: '8px 12px', background: hf.surface,
+                    border: `1px solid ${hf.border}`, borderRadius: 9, boxSizing: 'border-box',
+                    fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none',
+                  }}
+                />
+                <Btn variant="outline" size="sm" onClick={() => setExportingRoster(true)} style={isMobile ? { width: '100%' } : undefined}>Export</Btn>
+              </div>
             </div>
 
             <div style={{ padding: '8px 16px 14px' }}>
@@ -535,7 +648,7 @@ export default function TeacherClasses() {
                     <Btn variant="ghost" size="sm" onClick={() => setPage(p => p)}>Retry</Btn>
                   </div>
                 )
-                : <RosterTable rows={filteredRoster} loading={rosterLoading} />}
+                : <RosterTable rows={filteredRoster} loading={rosterLoading} onView={(e) => setViewStudent({ ...e.student, class_label: selectedClass.class_label })} />}
 
               {/* Pagination — wired; limit 100 fits most classes on one page. */}
               {rosterMeta.totalPages > 1 && (
@@ -571,6 +684,20 @@ export default function TeacherClasses() {
           sourceLabel={promoteTarget.label}
           onClose={() => setPromoteTarget(null)}
           onPromoted={() => setRosterRefresh((n) => n + 1)}
+        />
+      )}
+
+      {viewStudent && (
+        <StudentProfileModal student={viewStudent} onClose={() => setViewStudent(null)} />
+      )}
+
+      {exportingRoster && (
+        <ExportStudentsModal
+          classOptions={exportClassOptions}
+          fetchStudents={fetchTeacherStudents}
+          fields={TEACHER_EXPORT_FIELDS}
+          showInactiveToggle={false}
+          onClose={() => setExportingRoster(false)}
         />
       )}
 
