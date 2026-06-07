@@ -556,8 +556,8 @@ const HA3 = () => {
     name: r.name, phone: r.phone || '', email: r.email || '',
     gender: r.gender || '', caste: r.caste || '', address: r.address || '',
     admission_no: r.admission_no, epunjab_id: r.epunjab_id || '',
-    aadhar_no: r.aadhar_number || '',
-    dob: r.date_of_birth ? r.date_of_birth.slice(0, 10) : '',
+    aadhar_no: r.aadhar_no || '',
+    dob: r.dob ? r.dob.slice(0, 10) : '',
     father_name: r.father_name || '', father_contact: r.father_contact || '',
     mother_name: r.mother_name || '', mother_contact: r.mother_contact || '',
   });
@@ -1065,8 +1065,8 @@ const HA3Detail = () => {
     name: s.name, phone: s.phone || '', email: s.email || '',
     gender: s.gender || '', caste: s.caste || '', address: s.address || '',
     admission_no: s.admission_no, epunjab_id: s.epunjab_id || '',
-    aadhar_no: s.aadhar_number || '',
-    dob: s.date_of_birth ? s.date_of_birth.slice(0, 10) : '',
+    aadhar_no: s.aadhar_no || '',
+    dob: s.dob ? s.dob.slice(0, 10) : '',
     father_name: s.father_name || '', father_contact: s.father_contact || '',
     mother_name: s.mother_name || '', mother_contact: s.mother_contact || '',
   } : null;
@@ -1132,7 +1132,7 @@ const HA3Detail = () => {
               <InfoRow label="Phone" value={s.phone} />
               <InfoRow label="Email" value={s.email} />
               <InfoRow label="Gender" value={s.gender} />
-              <InfoRow label="DOB" value={s.date_of_birth ? new Date(s.date_of_birth).toLocaleDateString() : '—'} />
+              <InfoRow label="DOB" value={s.dob ? new Date(s.dob).toLocaleDateString() : '—'} />
               <InfoRow label="Caste" value={s.caste} />
               <InfoRow label="Address" value={s.address} />
             </Card>
@@ -1142,7 +1142,7 @@ const HA3Detail = () => {
                 <div style={{ ...hfText.h2 }}>ID details</div>
               </div>
               <InfoRow label="Admission no." value={s.admission_no} />
-              <InfoRow label="Aadhar" value={s.aadhar_number} />
+              <InfoRow label="Aadhar" value={s.aadhar_no} />
               <InfoRow label="ePunjab ID" value={s.epunjab_id} />
             </Card>
 
