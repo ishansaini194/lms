@@ -369,8 +369,8 @@ func (h *StudentPortalHandler) AssessmentMarks(c *fiber.Ctx) error {
 
 // GET /api/me/library — library files for the student's school.
 // Library content (syllabus, notes, datesheets) is shared educational material,
-// not per-student private data, so students see all of their school's files.
-// Optional filters: ?category=&subject=
+// not per-student private data, so students see all of their school's files —
+// same as teachers. Optional filters: ?category=&subject=
 func (h *StudentPortalHandler) Library(c *fiber.Ctx) error {
 	_, ok := h.studentID(c)
 	if !ok {
@@ -393,6 +393,7 @@ func (h *StudentPortalHandler) Library(c *fiber.Ctx) error {
 	if err := query.Order("created_at DESC").Find(&files).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch library files"})
 	}
+	stampClassNames(h.DB, schoolID, files)
 	return c.JSON(files)
 }
 

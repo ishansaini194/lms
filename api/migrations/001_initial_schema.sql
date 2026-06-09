@@ -444,7 +444,8 @@ CREATE TABLE
         academic_year_id BIGINT REFERENCES academic_years (id) ON DELETE SET NULL,
         category VARCHAR(50) NOT NULL,
         subject VARCHAR(100),
-        class_number INTEGER,
+        class_number INTEGER, -- legacy; superseded by class_id
+        class_id BIGINT REFERENCES classes (id) ON DELETE SET NULL,
         title VARCHAR(200) NOT NULL,
         description TEXT,
         file_url VARCHAR(500) NOT NULL,
@@ -458,6 +459,8 @@ CREATE INDEX idx_library_school ON library (school_id);
 CREATE INDEX idx_library_school_category ON library (school_id, category);
 
 CREATE INDEX idx_library_class ON library (class_number);
+
+CREATE INDEX idx_library_class_id ON library (class_id);
 
 -- audit_logs
 CREATE TABLE

@@ -37,9 +37,55 @@ type libraryListItem struct {
 	UploadedByName string `json:"uploaded_by_name"`
 }
 
+// libraryClassNames returns class_id → grade name for the given ids,
+// school-scoped. Used to stamp ClassName onto library responses so the portals
+// can label files without a second round-trip. Package-level so the student
+// portal handler can share it.
+func libraryClassNames(db *gorm.DB, schoolID uint, ids []uint) map[uint]string {
+	out := map[uint]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	type row struct {
+		ID   uint
+		Name string
+	}
+	var rows []row
+	db.Table("classes").Select("id, name").
+		Where("school_id = ? AND id IN ?", schoolID, ids).
+		Scan(&rows)
+	for _, r := range rows {
+		out[r.ID] = r.Name
+	}
+	return out
+}
+
+// stampClassNames sets ClassName on each file from its ClassID (one batched
+// query). Shared by the admin/teacher and student list paths.
+func stampClassNames(db *gorm.DB, schoolID uint, files []models.Library) {
+	idSet := map[uint]bool{}
+	ids := []uint{}
+	for _, f := range files {
+		if f.ClassID != nil && !idSet[*f.ClassID] {
+			idSet[*f.ClassID] = true
+			ids = append(ids, *f.ClassID)
+		}
+	}
+	names := libraryClassNames(db, schoolID, ids)
+	for i := range files {
+		if files[i].ClassID != nil {
+			if name, ok := names[*files[i].ClassID]; ok {
+				n := name
+				files[i].ClassName = &n
+			}
+		}
+	}
+}
+
 // enrichLibrary attaches the uploader's name via one batched users query (no
 // N+1). Falls back to "Staff" if the uploader's user row is gone. Order kept.
 func (h *LibraryHandler) enrichLibrary(schoolID uint, files []models.Library) []libraryListItem {
+	stampClassNames(h.DB, schoolID, files)
 	items := make([]libraryListItem, len(files))
 	for i := range files {
 		items[i] = libraryListItem{Library: files[i], UploadedByName: "Staff"}
@@ -84,12 +130,36 @@ func (h *LibraryHandler) enrichLibrary(schoolID uint, files []models.Library) []
 	return items
 }
 
-// GET /api/library?category=&subject=&class_number=&academic_year_id=
+// GET /api/library/classes — the school's grades for the class picker, one
+// entry per grade name (sections merged). class_id is the stable representative
+// (lowest id) for that grade, so file links never drift when classes are
+// reordered or new sections are added. Active classes only.
+func (h *LibraryHandler) Classes(c *fiber.Ctx) error {
+	schoolID := middleware.GetSchoolID(c)
+	type row struct {
+		ClassID uint
+		Label   string
+	}
+	var rows []row
+	h.DB.Table("classes").
+		Select("MIN(id) AS class_id, name AS label").
+		Where("school_id = ? AND is_active = ?", schoolID, true).
+		Group("name").
+		Order("MIN(sort_order), name").
+		Scan(&rows)
+	out := make([]fiber.Map, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, fiber.Map{"class_id": r.ClassID, "label": r.Label})
+	}
+	return c.JSON(out)
+}
+
+// GET /api/library?category=&subject=&class_id=&academic_year_id=
 func (h *LibraryHandler) List(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 	category := strings.TrimSpace(c.Query("category"))
 	subject := strings.TrimSpace(c.Query("subject"))
-	classNumber := c.QueryInt("class_number", 0)
+	classID := c.QueryInt("class_id", 0)
 	academicYearID := c.QueryInt("academic_year_id", 0)
 
 	query := h.DB.Model(&models.Library{}).Where("school_id = ?", schoolID)
@@ -99,8 +169,8 @@ func (h *LibraryHandler) List(c *fiber.Ctx) error {
 	if subject != "" {
 		query = query.Where("subject = ?", subject)
 	}
-	if classNumber > 0 {
-		query = query.Where("class_number = ?", classNumber)
+	if classID > 0 {
+		query = query.Where("class_id = ?", classID)
 	}
 	if academicYearID > 0 {
 		query = query.Where("academic_year_id = ?", academicYearID)
@@ -123,7 +193,7 @@ func (h *LibraryHandler) Upload(c *fiber.Ctx) error {
 	category := strings.ToLower(strings.TrimSpace(c.FormValue("category")))
 	subject := strings.TrimSpace(c.FormValue("subject"))
 	description := strings.TrimSpace(c.FormValue("description"))
-	classNumber, _ := strconv.Atoi(c.FormValue("class_number"))
+	classID, _ := strconv.Atoi(c.FormValue("class_id"))
 	academicYearID, _ := strconv.Atoi(c.FormValue("academic_year_id"))
 
 	if title == "" {
@@ -192,9 +262,20 @@ func (h *LibraryHandler) Upload(c *fiber.Ctx) error {
 	if description != "" {
 		descPtr = &description
 	}
-	var classNumberPtr *int
-	if classNumber > 0 {
-		classNumberPtr = &classNumber
+	// class_id is optional; when given it must be an active class in this school.
+	var classIDPtr *uint
+	if classID > 0 {
+		var classCnt int64
+		if err := h.DB.Model(&models.Class{}).
+			Where("id = ? AND school_id = ? AND is_active = ?", classID, schoolID, true).
+			Count(&classCnt).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+		}
+		if classCnt == 0 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "class not found in this school"})
+		}
+		v := uint(classID)
+		classIDPtr = &v
 	}
 
 	lf := models.Library{
@@ -203,7 +284,7 @@ func (h *LibraryHandler) Upload(c *fiber.Ctx) error {
 		AcademicYearID: uint(academicYearID),
 		Category:       category,
 		Subject:        subjectPtr,
-		ClassNumber:    classNumberPtr,
+		ClassID:        classIDPtr,
 		Title:          title,
 		Description:    descPtr,
 		FileUrl:        relURL,

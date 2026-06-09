@@ -229,6 +229,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	libraryHandler := handlers.NewLibraryHandler(db, "uploads/library")
 
 	library := api.Group("/library", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
+	library.Get("/classes", libraryHandler.Classes)
 	library.Get("/", libraryHandler.List)
 	library.Post("/", libraryHandler.Upload)
 	library.Get("/:id/download", libraryHandler.Download)

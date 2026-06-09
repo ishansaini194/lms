@@ -12,7 +12,9 @@ const CATEGORIES = ['syllabus', 'notes', 'pyq', 'datesheet', 'circular', 'other'
 const CAT_LABEL = { syllabus: 'Syllabus', notes: 'Notes', pyq: 'PYQ', datesheet: 'Datesheet', circular: 'Circular', other: 'Other' };
 const CAT_TONE = { syllabus: 'primary', notes: 'good', pyq: 'warn', datesheet: 'accent', circular: 'neutral', other: 'neutral' };
 
-const CLASS_OPTIONS = [{ value: '', label: 'All classes' }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `Class ${i + 1}` }))];
+// Grade label: prefix numeric grades with "Class" (Class 5), leave named ones
+// as-is (Nursery).
+const gradeLabel = (name) => (name != null && /^\d+$/.test(String(name)) ? `Class ${name}` : (name || ''));
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -87,7 +89,7 @@ const FileCard = ({ f, onDownload }) => (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 6 }}>
             <Pill tone={CAT_TONE[f.category] || 'neutral'}>{CAT_LABEL[f.category] || f.category}</Pill>
             {f.subject && <Pill tone="neutral">{f.subject}</Pill>}
-            {f.class_number && <Pill tone="neutral">Class {f.class_number}</Pill>}
+            {f.class_name && <Pill tone="neutral">{gradeLabel(f.class_name)}</Pill>}
           </div>
         </div>
       </div>
@@ -142,12 +144,25 @@ export default function StudentLibrary() {
     return m;
   }, [files]);
 
+  // Class filter options are derived from the grades actually present in the
+  // files (students have no classes endpoint), deduped and labelled.
+  const classOptions = useMemo(() => {
+    const seen = new Map();
+    for (const f of files) {
+      if (f.class_id != null && !seen.has(f.class_id)) seen.set(f.class_id, f.class_name);
+    }
+    return [
+      { value: '', label: 'All classes' },
+      ...[...seen.entries()].map(([id, name]) => ({ value: String(id), label: gradeLabel(name) })),
+    ];
+  }, [files]);
+
   const visible = useMemo(() => {
     const sub = searchSubject.trim().toLowerCase();
     return files.filter(f => {
       if (filterCat && f.category !== filterCat) return false;
       if (sub && !(f.subject || '').toLowerCase().includes(sub)) return false;
-      if (filterClass && String(f.class_number || '') !== filterClass) return false;
+      if (filterClass && String(f.class_id || '') !== filterClass) return false;
       return true;
     });
   }, [files, filterCat, searchSubject, filterClass]);
@@ -196,7 +211,7 @@ export default function StudentLibrary() {
             style={{ flex: 1, minWidth: 160, padding: '8px 12px', background: hf.surface, border: `1px solid ${hf.border}`, borderRadius: 9, fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none' }}
           />
           <div style={{ width: isMobile ? '100%' : 180 }}>
-            <FSelect value={filterClass} onChange={setFilterClass} options={CLASS_OPTIONS} />
+            <FSelect value={filterClass} onChange={setFilterClass} options={classOptions} />
           </div>
         </div>
 

@@ -13,7 +13,15 @@ const CAT_LABEL = { syllabus: 'Syllabus', notes: 'Notes', pyq: 'PYQ', datesheet:
 const CAT_TONE = { syllabus: 'primary', notes: 'good', pyq: 'warn', datesheet: 'accent', circular: 'neutral', other: 'neutral' };
 const MAX_SIZE = 25 * 1024 * 1024;
 
-const CLASS_OPTIONS = [{ value: '', label: 'All classes / none' }, ...Array.from({ length: 12 }, (_, i) => ({ value: String(i + 1), label: `Class ${i + 1}` }))];
+// Grade label: prefix numeric grades with "Class" (Class 5), leave named ones
+// as-is (Nursery). Used for the class picker and the file's class column.
+const gradeLabel = (name) => (name != null && /^\d+$/.test(String(name)) ? `Class ${name}` : (name || ''));
+
+// Build <FSelect> options from the school's grades ([{class_id, label}]).
+const classOptions = (classes, allLabel) => [
+  { value: '', label: allLabel },
+  ...(classes || []).map((c) => ({ value: String(c.class_id), label: gradeLabel(c.label) })),
+];
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -89,12 +97,12 @@ const FileIcon = () => (
 
 // ── Upload modal ────────────────────────────────────────────────────────────
 
-const UploadModal = ({ currentAY, onClose, onSaved }) => {
+const UploadModal = ({ currentAY, classes, onClose, onSaved }) => {
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('notes');
   const [subject, setSubject] = useState('');
-  const [classNumber, setClassNumber] = useState('');
+  const [classId, setClassId] = useState('');
   const [description, setDescription] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -123,7 +131,7 @@ const UploadModal = ({ currentAY, onClose, onSaved }) => {
       fd.append('category', category);
       fd.append('academic_year_id', String(currentAY.id));
       if (subject.trim()) fd.append('subject', subject.trim());
-      if (classNumber) fd.append('class_number', classNumber);
+      if (classId) fd.append('class_id', classId);
       if (description.trim()) fd.append('description', description.trim());
       await apiUpload('/api/library', fd);
       onSaved?.();
@@ -176,7 +184,7 @@ const UploadModal = ({ currentAY, onClose, onSaved }) => {
             </div>
             <div>
               <FieldLabel>Class <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
-              <FSelect value={classNumber} onChange={setClassNumber} options={CLASS_OPTIONS} />
+              <FSelect value={classId} onChange={setClassId} options={classOptions(classes, 'All classes / none')} />
             </div>
           </div>
 
@@ -229,6 +237,7 @@ export default function TeacherLibrary() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [currentAY, setCurrentAY] = useState(null);
+  const [classes, setClasses] = useState([]); // [{class_id, label}] grades for the picker
   const [actionErr, setActionErr] = useState('');
 
   const [filterCat, setFilterCat] = useState(null); // null = All
@@ -244,13 +253,15 @@ export default function TeacherLibrary() {
     setLoading(true);
     setError('');
     try {
-      const [files, years] = await Promise.all([
+      const [files, years, grades] = await Promise.all([
         apiFetch('/api/library'),
         apiFetch('/api/academic-years').catch(() => []),
+        apiFetch('/api/library/classes').catch(() => []),
       ]);
       setList(Array.isArray(files) ? files : []);
       const cur = Array.isArray(years) && years.find(y => y.is_current);
       setCurrentAY(cur ? { id: cur.id, year_label: cur.year_label } : null);
+      setClasses(Array.isArray(grades) ? grades : []);
     } catch (e) {
       setError(e.message || 'Failed to load the library');
     } finally {
@@ -288,7 +299,7 @@ export default function TeacherLibrary() {
     return files.filter(f => {
       if (filterCat && f.category !== filterCat) return false;
       if (sub && !(f.subject || '').toLowerCase().includes(sub)) return false;
-      if (filterClass && String(f.class_number || '') !== filterClass) return false;
+      if (filterClass && String(f.class_id || '') !== filterClass) return false;
       return true;
     });
   }, [files, filterCat, searchSubject, filterClass]);
@@ -354,7 +365,7 @@ export default function TeacherLibrary() {
             style={{ flex: 1, minWidth: 180, padding: '8px 12px', background: hf.surface, border: `1px solid ${hf.border}`, borderRadius: 9, fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none' }}
           />
           <div style={{ width: 180 }}>
-            <FSelect value={filterClass} onChange={setFilterClass} options={CLASS_OPTIONS.map(o => o.value === '' ? { value: '', label: 'All classes' } : o)} />
+            <FSelect value={filterClass} onChange={setFilterClass} options={classOptions(classes, 'All classes')} />
           </div>
         </div>
 
@@ -378,7 +389,7 @@ export default function TeacherLibrary() {
                   </div>
                   <div><Pill tone={CAT_TONE[f.category] || 'neutral'}>{CAT_LABEL[f.category] || f.category}</Pill></div>
                   <div style={{ ...hfText.small, color: f.subject ? hf.ink2 : hf.faint }}>{f.subject || '—'}</div>
-                  <div style={{ ...hfText.small, color: f.class_number ? hf.ink2 : hf.faint }}>{f.class_number ? `Class ${f.class_number}` : 'All'}</div>
+                  <div style={{ ...hfText.small, color: f.class_name ? hf.ink2 : hf.faint }}>{f.class_name ? gradeLabel(f.class_name) : 'All'}</div>
                   <div style={{ ...hfText.small, color: hf.ink2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {mine ? <span style={{ fontWeight: 600 }}>You</span> : (f.uploaded_by_name || 'Staff')}
                   </div>
@@ -407,7 +418,7 @@ export default function TeacherLibrary() {
       {body}
 
       {uploading && (
-        <UploadModal currentAY={currentAY} onClose={() => setUploading(false)} onSaved={() => { setUploading(false); loadAll(); }} />
+        <UploadModal currentAY={currentAY} classes={classes} onClose={() => setUploading(false)} onSaved={() => { setUploading(false); loadAll(); }} />
       )}
       {deleting && (
         <ConfirmDelete file={deleting} busy={delBusy} error={delErr} onCancel={() => setDeleting(null)} onConfirm={doDelete} />
