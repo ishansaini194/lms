@@ -256,6 +256,10 @@ const HA2 = () => {
   const [settingUp, setSettingUp] = useState(null);     // class being set up
   const [assigning, setAssigning] = useState(null);     // class whose teacher is being assigned
 
+  // Drag-to-reorder state. dragId = card being dragged, overId = drop target.
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+
   const loadClasses = () => {
     setLoading(true);
     apiFetch('/api/classes')
@@ -296,6 +300,39 @@ const HA2 = () => {
 
   const activeCount = classes.filter(c => c.is_active).length;
 
+  // Reordering is only coherent over the full, unfiltered list (sort_order is
+  // global), so it's disabled while searching.
+  const canReorder = !q && classes.length > 1;
+
+  // Persist a new order optimistically; roll back on failure. sort_order is
+  // spaced by 10s so future single-card nudges have room without a full rewrite.
+  const persistOrder = async (ordered) => {
+    const prev = classes;
+    setClasses(ordered);
+    try {
+      await apiFetch('/api/classes/reorder', {
+        method: 'PATCH',
+        body: { order: ordered.map((c, i) => ({ id: c.id, sort_order: (i + 1) * 10 })) },
+      });
+    } catch (e) {
+      setClasses(prev);
+      setError(e.message || 'Failed to save new order');
+    }
+  };
+
+  const handleDrop = (targetId) => {
+    setOverId(null);
+    if (dragId == null || dragId === targetId) { setDragId(null); return; }
+    const arr = [...classes];
+    const from = arr.findIndex((c) => c.id === dragId);
+    const to = arr.findIndex((c) => c.id === targetId);
+    setDragId(null);
+    if (from < 0 || to < 0 || from === to) return;
+    const [moved] = arr.splice(from, 1);
+    arr.splice(to, 0, moved);
+    persistOrder(arr);
+  };
+
   return (
     <>
       <AdminChrome
@@ -332,7 +369,14 @@ const HA2 = () => {
             return (
               <Card key={c.id} padding={0} className={isSetUp ? 'hf-clickable' : undefined}
                 onClick={isSetUp ? () => navigate(`/admin/students?class_year_id=${c.class_year_id}`) : undefined}
-                style={{ border: `1px solid ${hf.border}`, background: hf.surface }}>
+                onDragOver={canReorder ? (e) => { e.preventDefault(); if (overId !== c.id) setOverId(c.id); } : undefined}
+                onDrop={canReorder ? (e) => { e.preventDefault(); handleDrop(c.id); } : undefined}
+                style={{
+                  border: `1px solid ${overId === c.id && dragId !== c.id ? hf.primary : hf.border}`,
+                  background: hf.surface,
+                  opacity: dragId === c.id ? 0.4 : 1,
+                  transition: 'opacity .12s ease, border-color .12s ease',
+                }}>
                 <div style={{ padding: '16px 18px 12px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                   <div>
                     <div style={{ ...hfText.display, fontSize: 28, lineHeight: 1 }}>{title}</div>
@@ -342,6 +386,17 @@ const HA2 = () => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {c.board && <Pill tone="neutral">{String(c.board).toUpperCase()}</Pill>}
+                    {canReorder && (
+                      <span
+                        draggable
+                        onDragStart={(e) => { e.stopPropagation(); setDragId(c.id); }}
+                        onDragEnd={() => { setDragId(null); setOverId(null); }}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Drag to reorder"
+                        className="hf-btn"
+                        style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.muted, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', cursor: 'grab', fontSize: 14, lineHeight: 1, userSelect: 'none' }}
+                      >⠿</span>
+                    )}
                     <button onClick={(e) => { e.stopPropagation(); setEditing(c); }} className="hf-btn" title="Edit" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
                     <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(c); }} className="hf-btn" title="Delete" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
                       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>

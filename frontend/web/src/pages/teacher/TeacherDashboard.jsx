@@ -113,6 +113,12 @@ const ExamRow = ({ e, onEnterMarks }) => {
   const roster = e.roster_size || 0;
   const entered = e.marks_entered || 0;
   const pct = roster > 0 ? Math.min(100, Math.round((Number(entered) / Number(roster)) * 100)) : 0;
+  // Surfaced exams always need marks; a future date means the exam hasn't
+  // happened yet, so it's a heads-up ("Upcoming") rather than overdue.
+  const upcoming = e.exam_date
+    ? new Date(e.exam_date).setHours(0, 0, 0, 0) > new Date().setHours(0, 0, 0, 0)
+    : false;
+  const pending = !upcoming;
   return (
     <div style={{
       padding: '10px 12px', borderRadius: 9,
@@ -129,13 +135,13 @@ const ExamRow = ({ e, onEnterMarks }) => {
             {e.subject} · {formatExamDate(e.exam_date)}
           </div>
         </div>
-        {e.needs_marks
+        {pending
           ? <Pill tone="accent">Needs marks</Pill>
           : <Pill tone="neutral">Upcoming</Pill>}
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ flex: 1, height: 6, borderRadius: 999, background: hf.border, overflow: 'hidden' }}>
-          <div style={{ width: `${pct}%`, height: '100%', background: e.needs_marks ? hf.accent : hf.primary }} />
+          <div style={{ width: `${pct}%`, height: '100%', background: pending ? hf.accent : hf.primary }} />
         </div>
         <span style={{ ...hfText.small, color: hf.muted, ...hfText.num }}>
           {entered} of {roster} entered

@@ -60,7 +60,8 @@ type tdNotice struct {
 
 type teacherDashboardResponse struct {
 	Responsibilities []tdResponsibility `json:"responsibilities"`
-	TotalStudents    int                `json:"total_students"` // sum of StudentCount across rows
+	TeacherSubject   string             `json:"teacher_subject"` // the teacher's own primary subject (from their record)
+	TotalStudents    int                `json:"total_students"`  // sum of StudentCount across rows
 	ExamsToAction    []tdExam           `json:"exams_to_action"`
 	RecentHomework   []tdHomework       `json:"recent_homework"`
 	RecentNotices    []tdNotice         `json:"recent_notices"`
@@ -102,6 +103,15 @@ func (h *TeacherDashboardHandler) Dashboard(c *fiber.Ctx) error {
 	}
 
 	resp := emptyTeacherDashboard()
+
+	// The teacher's own primary subject — used to pair their lead class with a
+	// subject for exam creation (a class teacher teaches their own subject to it).
+	var teacher models.Teacher
+	if err := h.DB.Select("subject").
+		Where("id = ? AND school_id = ?", teacherID, schoolID).
+		First(&teacher).Error; err == nil {
+		resp.TeacherSubject = teacher.Subject
+	}
 
 	// --- Responsibilities: class-teacher rows ∪ teaching-assignment rows (no dedup) ---
 
@@ -276,9 +286,10 @@ func (h *TeacherDashboardHandler) Dashboard(c *fiber.Ctx) error {
 			roster := rosterByCY[e.ClassYearID]
 			entered := marksByExam[e.ID]
 			needsMarks := entered < roster
-			isFuture := e.ExamDate != nil && !e.ExamDate.Before(today)
-			// Future/today exams always surface; past/undated only when marks are missing.
-			if !isFuture && !needsMarks {
+			// Only surface exams that still need marks — a fully-marked exam needs
+			// no action, whether it's past or upcoming. (A future exam that isn't
+			// marked yet still surfaces as a heads-up, labelled "Upcoming".)
+			if !needsMarks {
 				continue
 			}
 			out = append(out, tdExam{
@@ -328,10 +339,26 @@ func (h *TeacherDashboardHandler) Dashboard(c *fiber.Ctx) error {
 		})
 	}
 
-	// --- Recent notices (scoped by user_id, matching the notices handler) ---
+	// --- Recent notices: same visibility as the Notices tab (notices.List) —
+	// posted by this teacher, OR school-wide, OR targeting a class_year they are
+	// the class teacher of. The class-teacher sub-select is school-scoped on its
+	// own, and the OR group is built as a sub-*gorm.DB so GORM parenthesizes it,
+	// keeping it ANDed under the outer school_id tenant scope. ---
+	classTeacherNotices := h.DB.
+		Table("notice_targets AS nt").
+		Select("nt.notice_id").
+		Joins("JOIN class_years cy ON cy.id = nt.class_year_id").
+		Where("cy.class_teacher_id = ? AND cy.school_id = ?", teacherID, schoolID)
+	noticeVisibility := h.DB.
+		Where("notices.posted_by_id = ?", userID).
+		Or("notices.target_all_school = ?", true).
+		Or("notices.id IN (?)", classTeacherNotices)
+
 	var notices []models.Notice
-	h.DB.Where("school_id = ? AND is_active = ? AND posted_by_id = ?", schoolID, true, userID).
-		Order("created_at DESC").
+	h.DB.Model(&models.Notice{}).
+		Where("notices.school_id = ? AND notices.is_active = ?", schoolID, true).
+		Where(noticeVisibility).
+		Order("notices.created_at DESC").
 		Limit(5).
 		Find(&notices)
 	for _, n := range notices {

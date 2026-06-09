@@ -38,21 +38,28 @@ const Overlay = ({ onClose, children }) => (
   </div>
 );
 
-// The teacher's (class + subject) teaching-assignment pairs, derived from the
-// dashboard responsibilities. Only rows with a subject are real teaching
-// assignments (class-teacher-only rows have an empty subject and are NOT
-// valid exam targets under the assignment-scoped rule). The composite value
-// `<class_year_id>::<subject>` fixes both fields when the teacher picks a pair,
-// and the subject is taken verbatim so it matches the assignment string exactly.
-function buildAssignmentPairs(responsibilities) {
+// The teacher's (class + subject) exam targets, derived from the dashboard
+// responsibilities. Two sources, deduped by `<class_year_id>::<subject>`:
+//   1. Subject teaching-assignment rows — `<class, subject>` taken verbatim so
+//      the subject matches the assignment string exactly.
+//   2. Lead (class-teacher) classes — paired with the teacher's OWN primary
+//      subject, so a class teacher can create exams for their class even with
+//      no explicit teaching assignment. Skipped when the teacher has no subject.
+function buildAssignmentPairs(responsibilities, teacherSubject) {
   const out = [];
   const seen = new Set();
-  for (const r of responsibilities || []) {
-    if (!r.subject) continue;
-    const value = `${r.class_year_id}::${r.subject}`;
-    if (seen.has(value)) continue;
+  const add = (class_year_id, subject, class_label) => {
+    const value = `${class_year_id}::${subject}`;
+    if (seen.has(value)) return;
     seen.add(value);
-    out.push({ value, class_year_id: r.class_year_id, subject: r.subject, label: `${r.class_label} · ${r.subject}` });
+    out.push({ value, class_year_id, subject, label: `${class_label} · ${subject}` });
+  };
+  for (const r of responsibilities || []) {
+    if (r.subject) {
+      add(r.class_year_id, r.subject, r.class_label);
+    } else if (r.is_class_teacher && teacherSubject) {
+      add(r.class_year_id, teacherSubject, r.class_label);
+    }
   }
   return out;
 }
@@ -85,7 +92,7 @@ const TeacherExamCreateModal = ({ onClose, onSaved }) => {
           apiFetch('/api/academic-years'),
         ]);
         if (cancelled) return;
-        setAssignments(buildAssignmentPairs(dash?.responsibilities));
+        setAssignments(buildAssignmentPairs(dash?.responsibilities, dash?.teacher_subject));
         const cur = Array.isArray(years) ? years.find((y) => y.is_current) : null;
         const ayId = cur ? cur.id : null;
         setAcademicYearId(ayId);
@@ -284,7 +291,10 @@ export function TeacherMarksList() {
                         <div style={{ ...hfText.small, color: hf.muted, marginTop: 1 }}>{ex.subject} · {ex.class_label || '—'}</div>
                       </div>
                     </div>
-                    {!ex.is_active && <Pill tone="neutral">Inactive</Pill>}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 4 }}>
+                      {ex.exam_term_name && <Pill tone="neutral">{ex.exam_term_name}</Pill>}
+                      {!ex.is_active && <Pill tone="neutral">Inactive</Pill>}
+                    </div>
                   </div>
                   <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 18 }}>
                     <div>

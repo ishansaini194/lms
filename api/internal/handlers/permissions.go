@@ -74,6 +74,22 @@ func teacherAssignedSubject(db *gorm.DB, teacherID, classYearID uint, subject st
 	return count > 0
 }
 
+// teacherLeadsClassForSubject: is this teacher the class_teacher of the
+// class_year AND is `subject` their own primary subject? Lets a class teacher
+// create exams for their lead class for the subject they teach, even without an
+// explicit teaching assignment. Subject is matched exactly, mirroring
+// teacherAssignedSubject. School-scoped.
+func teacherLeadsClassForSubject(db *gorm.DB, teacherID, classYearID uint, subject string, schoolID uint) bool {
+	if subject == "" || !teacherOwnsClassYear(db, teacherID, classYearID, schoolID) {
+		return false
+	}
+	var count int64
+	db.Model(&models.Teacher{}).
+		Where("id = ? AND school_id = ? AND subject = ?", teacherID, schoolID, subject).
+		Count(&count)
+	return count > 0
+}
+
 // teacherOwnsExam: is this teacher assigned to the exam?
 func teacherOwnsExam(db *gorm.DB, teacherID, examID, schoolID uint) bool {
 	var count int64

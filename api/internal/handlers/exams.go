@@ -281,11 +281,13 @@ func (h *ExamsHandler) Create(c *fiber.Ctx) error {
 
 	if isTeacher(c) {
 		tid := middleware.GetTeacherID(c)
-		// Teachers may create exams only for an exact (class_year, subject) pair
-		// they're actively assigned to teach — no untaught classes, no subjects
-		// they aren't assigned for that class. 404 (not 403) on a miss, per the
-		// ownership-failure-as-404 convention — don't reveal whether it exists.
-		if !teacherAssignedSubject(h.DB, tid, body.ClassYearID, body.Subject, schoolID) {
+		// Teachers may create exams for an exact (class_year, subject) pair they
+		// actively teach, OR for their own lead class (class teacher) with their
+		// own primary subject — no untaught classes, no subjects they aren't tied
+		// to. 404 (not 403) on a miss, per the ownership-failure-as-404
+		// convention — don't reveal whether it exists.
+		if !teacherAssignedSubject(h.DB, tid, body.ClassYearID, body.Subject, schoolID) &&
+			!teacherLeadsClassForSubject(h.DB, tid, body.ClassYearID, body.Subject, schoolID) {
 			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "class_year not found in this school"})
 		}
 		// Force ownership to the creating teacher — ignore any teacher_id in the body.
