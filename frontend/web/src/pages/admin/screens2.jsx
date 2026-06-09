@@ -13,6 +13,7 @@ import {
 } from '@/components/admin/AdminChrome';
 import { TeacherFormModal, HA6Modal, ConfirmModal, ManageSubjectsModal } from '@/pages/admin/extras.jsx';
 import { useAuth } from '@/auth/AuthContext';
+import { AttachmentDownload } from '@/lib/notices';
 // Admin hi-fi · A4 Fees (Collect flow) · A5 Teachers · A6 Notices
 
 // ── Module-level helpers (kept out of the component to avoid focus loss) ──
@@ -1387,6 +1388,7 @@ const HA6 = () => {
                     <button onClick={() => setEditing(n)} className="hf-btn" title="Edit notice" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}>✎</button>
                   </div>
                   <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5, marginBottom: 10, whiteSpace: 'pre-wrap' }}>{n.body}</div>
+                  {n.attachment_url && <div style={{ marginBottom: 10 }}><AttachmentDownload notice={n} /></div>}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                     {n.posted_by_name && <span style={{ ...hfText.small, fontSize: 11, color: hf.muted }}>Posted by {n.posted_by_name}</span>}
                     <div style={{ flex: 1 }} />

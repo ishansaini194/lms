@@ -4,6 +4,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import { Card, Pill, Btn, ModalShell } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
+import { AttachmentDownload } from '@/lib/notices';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -62,6 +63,7 @@ const NoticeRow = ({ n, onOpen }) => (
     <div style={{ padding: '14px 16px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <Pill tone={n.target_all_school ? 'primary' : 'neutral'}>{audienceLabel(n)}</Pill>
+        {n.attachment_url && <Pill tone="neutral">📎 Attachment</Pill>}
         <div style={{ flex: 1 }} />
         <span style={{ ...hfText.small, fontSize: 11, color: hf.muted, ...hfText.num, whiteSpace: 'nowrap' }}>{timeAgo(n.created_at)}</span>
       </div>
@@ -85,6 +87,7 @@ const NoticeDetail = ({ n, onClose }) => (
         <span style={{ ...hfText.small, color: hf.muted }}>{timeAgo(n.created_at)}</span>
       </div>
       <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{n.body}</div>
+      {n.attachment_url && <div style={{ marginTop: 6 }}><AttachmentDownload notice={n} /></div>}
     </ModalShell>
   </Overlay>
 );

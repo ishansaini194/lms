@@ -13,6 +13,11 @@ type Notice struct {
 	Body            string `gorm:"type:text;not null" json:"body"`
 	TargetAllSchool bool   `gorm:"not null;default:false" json:"target_all_school"`
 
+	// Optional single attachment (PDF or image). All nil when text-only.
+	AttachmentURL  *string `gorm:"type:text" json:"attachment_url,omitempty"`
+	AttachmentSize *int64  `json:"attachment_size,omitempty"`
+	AttachmentName *string `gorm:"size:255" json:"attachment_name,omitempty"`
+
 	CreatedAt time.Time `gorm:"index:idx_notices_school_created,priority:2,sort:desc" json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	IsActive  bool      `gorm:"not null;default:true" json:"is_active"`

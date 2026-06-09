@@ -285,6 +285,9 @@ CREATE TABLE
         title VARCHAR(200) NOT NULL,
         body TEXT NOT NULL,
         target_all_school BOOLEAN NOT NULL DEFAULT FALSE,
+        attachment_url TEXT, -- optional single attachment (PDF or image)
+        attachment_size BIGINT,
+        attachment_name VARCHAR(255), -- original filename for the download header
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         is_active BOOLEAN NOT NULL DEFAULT TRUE

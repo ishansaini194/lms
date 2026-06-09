@@ -5,6 +5,7 @@ import { Card, Pill, Btn, ModalShell, FInput, FTextarea } from '@/components/ui/
 import { apiFetch } from '@/lib/api';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { useAuth } from '@/auth/AuthContext';
+import { createNotice, validateNoticeFile, AttachmentPicker, AttachmentDownload } from '@/lib/notices';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -104,6 +105,7 @@ const NoticeRow = ({ n, mine, labelByCY, onEdit, onDelete }) => {
           )}
         </div>
         <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5, marginBottom: 8 }}>{truncate(n.body)}</div>
+        {n.attachment_url && <div style={{ marginBottom: 8 }}><AttachmentDownload notice={n} /></div>}
         <div style={{ ...hfText.small, fontSize: 11, color: hf.muted }}>{timeAgo(n.created_at)}</div>
       </div>
     </Card>
@@ -115,10 +117,13 @@ const NoticeModal = ({ classes, initial, onClose, onSaved }) => {
   const [selectedIds, setSelectedIds] = useState(initial?.class_year_ids?.length ? initial.class_year_ids : []);
   const [title, setTitle] = useState(initial?.title || '');
   const [bodyText, setBodyText] = useState(initial?.body || '');
+  const [file, setFile] = useState(null);
+  const [fileErr, setFileErr] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   const toggle = (id) => setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+  const pickFile = (f) => { setFileErr(validateNoticeFile(f) || ''); setFile(validateNoticeFile(f) ? null : f); };
 
   const save = async () => {
     setErr('');
@@ -129,14 +134,15 @@ const NoticeModal = ({ classes, initial, onClose, onSaved }) => {
     try {
       // A teacher is always class-targeted, never whole-school. Always send both
       // fields so target changes apply unambiguously on edit.
-      const body = {
+      const fields = {
         title: title.trim(),
         body: bodyText.trim(),
         target_all_school: false,
         class_year_ids: selectedIds,
       };
-      if (isEdit) await apiFetch(`/api/notices/${initial.id}`, { method: 'PUT', body });
-      else await apiFetch('/api/notices', { method: 'POST', body });
+      // Attachments are create-only; edit stays a plain JSON update.
+      if (isEdit) await apiFetch(`/api/notices/${initial.id}`, { method: 'PUT', body: fields });
+      else await createNotice({ fields, file });
       onSaved?.();
     } catch (e) {
       setErr(e.message || 'Save failed');
@@ -197,6 +203,8 @@ const NoticeModal = ({ classes, initial, onClose, onSaved }) => {
             <FieldLabel>Body</FieldLabel>
             <FTextarea value={bodyText} onChange={setBodyText} rows={5} placeholder="Write the notice your class will see…" />
           </div>
+
+          {!isEdit && <AttachmentPicker file={file} onPick={pickFile} error={fileErr} />}
 
           <div style={{ ...hfText.small, color: hf.muted }}>Visible to students in the selected class(es).</div>
 

@@ -156,7 +156,11 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	enrollments.Post("/promote", middleware.RequireRole("admin", "teacher"), enrollmentHandler.Promote)
 
 	// Notices
-	noticesHandler := handlers.NewNoticesHandler(db)
+	noticesHandler := handlers.NewNoticesHandler(db, "uploads/notices")
+
+	// Attachment download is open to any authenticated school member (students
+	// included) — registered before the admin/teacher group.
+	api.Get("/notices/:id/attachment/download", middleware.AuthRequired(), noticesHandler.DownloadAttachment)
 
 	notices := api.Group("/notices", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	notices.Get("/", noticesHandler.List)

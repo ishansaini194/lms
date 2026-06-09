@@ -16,6 +16,7 @@ import {
 import {
   feeTypes, boards, paymentModes,
 } from '@/mock/data';
+import { createNotice, validateNoticeFile, AttachmentPicker } from '@/lib/notices';
 
 const Row2 = ({ children }) => (
   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>{children}</div>
@@ -885,8 +886,12 @@ const HA6Modal = ({ onClose, onSaved, initial, prefill }) => {
   const [wholeSchool, setWholeSchool] = useState(seed ? !!seed.target_all_school : true);
   const [selectedIds, setSelectedIds] = useState(seed?.class_year_ids || []);
   const [classYears, setClassYears] = useState([]);
+  const [file, setFile] = useState(null);
+  const [fileErr, setFileErr] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+
+  const pickFile = (fl) => { setFileErr(validateNoticeFile(fl) || ''); setFile(validateNoticeFile(fl) ? null : fl); };
 
   useEffect(() => {
     apiFetch('/api/class-years')
@@ -914,16 +919,17 @@ const HA6Modal = ({ onClose, onSaved, initial, prefill }) => {
     try {
       // Always send target_all_school + class_year_ids so edits to targeting
       // (whole-school ↔ class-specific, in either direction) apply correctly.
-      const body = {
+      const fields = {
         title: f.title.trim(),
         body: f.body.trim(),
         target_all_school: wholeSchool,
         class_year_ids: wholeSchool ? [] : selectedIds,
       };
+      // Attachments are create-only; edit stays a plain JSON update.
       if (isEdit) {
-        await apiFetch(`/api/notices/${initial.id}`, { method: 'PUT', body });
+        await apiFetch(`/api/notices/${initial.id}`, { method: 'PUT', body: fields });
       } else {
-        await apiFetch('/api/notices', { method: 'POST', body });
+        await createNotice({ fields, file });
       }
       onSaved?.();
     } catch (e) {
@@ -1002,6 +1008,8 @@ const HA6Modal = ({ onClose, onSaved, initial, prefill }) => {
               </div>
             )}
           </div>
+
+          {!isEdit && <AttachmentPicker file={file} onPick={pickFile} error={fileErr} />}
 
           {err && (
             <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>

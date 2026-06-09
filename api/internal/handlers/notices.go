@@ -1,23 +1,68 @@
 package handlers
 
 import (
+	"bytes"
 	"errors"
+	"fmt"
+	"mime/multipart"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
 	"github.com/ishansaini194/lms/api/internal/services"
 	"gorm.io/gorm"
 )
 
+const maxNoticeAttachmentSize = 25 * 1024 * 1024 // 25 MB
+
 type NoticesHandler struct {
-	DB *gorm.DB
+	DB      *gorm.DB
+	BaseDir string // e.g. "uploads/notices"
 }
 
-func NewNoticesHandler(db *gorm.DB) *NoticesHandler {
-	return &NoticesHandler{DB: db}
+func NewNoticesHandler(db *gorm.DB, baseDir string) *NoticesHandler {
+	return &NoticesHandler{DB: db, BaseDir: baseDir}
+}
+
+// detectNoticeAttachment validates a notice attachment by extension AND magic
+// bytes (PDF / JPEG / PNG). Returns the normalized extension (".pdf"/".jpg"/
+// ".png") and true when valid.
+func detectNoticeAttachment(fh *multipart.FileHeader) (string, bool) {
+	ext := strings.ToLower(filepath.Ext(fh.Filename))
+	switch ext {
+	case ".pdf", ".jpg", ".jpeg", ".png":
+	default:
+		return "", false
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return "", false
+	}
+	defer f.Close()
+	head := make([]byte, 8)
+	n, _ := f.Read(head)
+	head = head[:n]
+
+	switch ext {
+	case ".pdf":
+		if len(head) >= 5 && string(head[:5]) == "%PDF-" {
+			return ".pdf", true
+		}
+	case ".jpg", ".jpeg":
+		if len(head) >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF {
+			return ".jpg", true
+		}
+	case ".png":
+		if bytes.HasPrefix(head, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
+			return ".png", true
+		}
+	}
+	return "", false
 }
 
 type CreateNoticeRequest struct {
@@ -211,26 +256,47 @@ func (h *NoticesHandler) GetOne(c *fiber.Ctx) error {
 }
 
 // POST /api/notices
+// Accepts JSON (text-only, unchanged) OR multipart/form-data with an optional
+// single attachment (PDF/JPG/PNG). Fields are identical across both encodings;
+// multipart adds the "attachment" file part.
 func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 	schoolID := middleware.GetSchoolID(c)
 	userID := middleware.GetUserID(c)
 
-	var body CreateNoticeRequest
-	if err := c.BodyParser(&body); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+	var title, bodyText string
+	var targetAllSchool bool
+	var classYearIDs []uint
+	var fileHeader *multipart.FileHeader
+
+	if strings.HasPrefix(c.Get("Content-Type"), "multipart/form-data") {
+		title = strings.TrimSpace(c.FormValue("title"))
+		bodyText = strings.TrimSpace(c.FormValue("body"))
+		targetAllSchool, _ = strconv.ParseBool(c.FormValue("target_all_school"))
+		ids, perr := parseFormUintSlice(c, "class_year_ids")
+		if perr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid class_year_ids"})
+		}
+		classYearIDs = ids
+		fileHeader, _ = c.FormFile("attachment") // optional
+	} else {
+		var body CreateNoticeRequest
+		if err := c.BodyParser(&body); err != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
+		}
+		title = strings.TrimSpace(body.Title)
+		bodyText = strings.TrimSpace(body.Body)
+		targetAllSchool = body.TargetAllSchool
+		classYearIDs = body.ClassYearIDs
 	}
 
-	body.Title = strings.TrimSpace(body.Title)
-	body.Body = strings.TrimSpace(body.Body)
-	if body.Title == "" {
+	if title == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "title is required"})
 	}
-	if body.Body == "" {
+	if bodyText == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "body is required"})
 	}
-
 	// If not school-wide, must target at least one class_year
-	if !body.TargetAllSchool && len(body.ClassYearIDs) == 0 {
+	if !targetAllSchool && len(classYearIDs) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "specify class_year_ids or set target_all_school=true",
 		})
@@ -239,10 +305,38 @@ func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 	notice := models.Notice{
 		SchoolID:        schoolID,
 		PostedByID:      userID,
-		Title:           body.Title,
-		Body:            body.Body,
-		TargetAllSchool: body.TargetAllSchool,
+		Title:           title,
+		Body:            bodyText,
+		TargetAllSchool: targetAllSchool,
 		IsActive:        true,
+	}
+
+	// Optional attachment: validate (type + magic bytes + size) and save to disk
+	// before the transaction; roll the file back if the DB insert fails.
+	var diskPath string
+	if fileHeader != nil {
+		if fileHeader.Size > maxNoticeAttachmentSize {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "attachment exceeds 25MB limit"})
+		}
+		ext, ok := detectNoticeAttachment(fileHeader)
+		if !ok {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "attachment must be a PDF, JPG, or PNG"})
+		}
+		dir := filepath.Join(h.BaseDir, strconv.Itoa(int(schoolID)))
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to prepare storage"})
+		}
+		storedName := uuid.NewString() + ext
+		diskPath = filepath.Join(dir, storedName)
+		if err := c.SaveFile(fileHeader, diskPath); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save attachment"})
+		}
+		relURL := filepath.ToSlash(filepath.Join(strconv.Itoa(int(schoolID)), storedName))
+		origName := filepath.Base(fileHeader.Filename)
+		size := fileHeader.Size
+		notice.AttachmentURL = &relURL
+		notice.AttachmentName = &origName
+		notice.AttachmentSize = &size
 	}
 
 	err := h.DB.Transaction(func(tx *gorm.DB) error {
@@ -251,8 +345,8 @@ func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 		}
 
 		// Only create targets if not school-wide
-		if !body.TargetAllSchool {
-			if err := h.validateAndInsertTargets(tx, schoolID, notice.ID, body.ClassYearIDs); err != nil {
+		if !targetAllSchool {
+			if err := h.validateAndInsertTargets(tx, schoolID, notice.ID, classYearIDs); err != nil {
 				return err
 			}
 		}
@@ -260,6 +354,9 @@ func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 	})
 
 	if err != nil {
+		if diskPath != "" {
+			_ = os.Remove(diskPath)
+		}
 		var he *httpError
 		if errors.As(err, &he) {
 			return c.Status(he.status).JSON(fiber.Map{"error": he.msg})
@@ -272,7 +369,7 @@ func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 	// request); a push failure cannot affect this already-committed response.
 	go services.SendNoticePush(h.DB, schoolID, notice.ID)
 
-	return c.Status(fiber.StatusCreated).JSON(noticeResponse{Notice: notice, ClassYearIDs: body.ClassYearIDs})
+	return c.Status(fiber.StatusCreated).JSON(noticeResponse{Notice: notice, ClassYearIDs: classYearIDs})
 }
 
 // PUT /api/notices/:id
@@ -393,6 +490,45 @@ func (h *NoticesHandler) Delete(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{"message": "notice deleted"})
+}
+
+// GET /api/notices/:id/attachment/download — streams a notice's attachment.
+// School-scoped (any authenticated member of the school may fetch it — datesheets
+// /circulars are shared). 404 when the notice has no attachment or isn't here.
+func (h *NoticesHandler) DownloadAttachment(c *fiber.Ctx) error {
+	schoolID := middleware.GetSchoolID(c)
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid notice id"})
+	}
+
+	var notice models.Notice
+	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&notice).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "notice not found"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if notice.AttachmentURL == nil || *notice.AttachmentURL == "" {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "no attachment"})
+	}
+
+	diskPath := filepath.Join(h.BaseDir, filepath.FromSlash(*notice.AttachmentURL))
+	absBase, _ := filepath.Abs(h.BaseDir)
+	absPath, _ := filepath.Abs(diskPath)
+	if !strings.HasPrefix(absPath, absBase) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
+	}
+
+	name := "attachment"
+	if notice.AttachmentName != nil && *notice.AttachmentName != "" {
+		name = sanitizeFilename(*notice.AttachmentName)
+	}
+	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
+	return c.SendFile(absPath)
 }
 
 // validateAndInsertTargets verifies each class_year belongs to the school, then bulk-inserts targets.

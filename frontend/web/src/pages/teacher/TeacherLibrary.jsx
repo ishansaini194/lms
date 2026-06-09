@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
@@ -91,9 +91,20 @@ const FileIcon = () => (
   }}>{I.book}</span>
 );
 
-// Multi-section target picker: sections grouped by grade, each grade with a
-// "select all sections" shortcut.
+// Multi-section target picker — a single dropdown. Closed: a summary count.
+// Open: checkboxes grouped by grade, each grade with a "select all sections"
+// shortcut. Selection still feeds the same repeated class_year_ids on submit.
 const TargetPicker = ({ options, selectedIds, onChange }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
   const grouped = useMemo(() => {
     const m = new Map();
     for (const o of options) {
@@ -109,45 +120,66 @@ const TargetPicker = ({ options, selectedIds, onChange }) => {
   if (options.length === 0) {
     return <div style={{ ...hfText.small, color: hf.muted }}>No classes set up yet — ask your admin.</div>;
   }
+
+  const summary = selectedIds.length === 0 ? 'Select classes…' : `${selectedIds.length} selected`;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflowY: 'auto' }}>
-      {grouped.map(([grade, secs]) => {
-        const ids = secs.map(s => s.id);
-        const allOn = ids.every(id => selectedIds.includes(id));
-        const gradeLbl = /^\d+$/.test(String(grade)) ? `Class ${grade}` : grade;
-        return (
-          <div key={grade}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-              <span style={{ ...hfText.small, fontWeight: 700, color: hf.ink }}>{gradeLbl}</span>
-              <button onClick={() => toggleGrade(ids, allOn)} className="hf-btn" style={{
-                ...hfText.small, fontWeight: 600, color: allOn ? hf.accent : hf.primary,
-                background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px',
-              }}>{allOn ? 'Clear all' : 'All sections'}</button>
-            </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {secs.map(s => {
-                const sel = selectedIds.includes(s.id);
-                return (
-                  <div key={s.id} onClick={() => toggle(s.id)} style={{
-                    display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer',
-                    padding: '6px 11px', borderRadius: 8,
-                    border: `1px solid ${sel ? hf.primary : hf.border}`,
-                    background: sel ? hf.primarySoft : hf.surface,
-                  }}>
-                    <span style={{
-                      width: 16, height: 16, borderRadius: 4, flexShrink: 0,
-                      background: sel ? hf.primary : hf.surface,
-                      border: `1.5px solid ${sel ? hf.primary : hf.faint}`,
-                      color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
-                    }}>{sel && '✓'}</span>
-                    <span style={{ ...hfText.small, color: hf.ink2, fontWeight: 600 }}>{s.label}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen(o => !o)} className="hf-btn" style={{
+        width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+        padding: '9px 12px', borderRadius: 9, cursor: 'pointer',
+        background: hf.surface, border: `1px solid ${open ? hf.primary : hf.border}`,
+        ...hfText.small, fontWeight: 600, color: selectedIds.length ? hf.ink : hf.muted,
+      }}>
+        <span>{summary}</span>
+        <span style={{ color: hf.muted, transform: open ? 'rotate(180deg)' : 'none', transition: 'transform .12s' }}>▾</span>
+      </button>
+
+      {open && (
+        <div style={{
+          marginTop: 6, padding: 12, borderRadius: 10, border: `1px solid ${hf.border}`,
+          background: hf.surface, boxShadow: hf.shadowSm,
+          display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 260, overflowY: 'auto',
+        }}>
+          {grouped.map(([grade, secs]) => {
+            const ids = secs.map(s => s.id);
+            const allOn = ids.every(id => selectedIds.includes(id));
+            const gradeLbl = /^\d+$/.test(String(grade)) ? `Class ${grade}` : grade;
+            return (
+              <div key={grade}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <span style={{ ...hfText.small, fontWeight: 700, color: hf.ink }}>{gradeLbl}</span>
+                  <button type="button" onClick={() => toggleGrade(ids, allOn)} className="hf-btn" style={{
+                    ...hfText.small, fontWeight: 600, color: allOn ? hf.accent : hf.primary,
+                    background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px',
+                  }}>{allOn ? 'Clear all' : 'All sections'}</button>
+                </div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {secs.map(s => {
+                    const sel = selectedIds.includes(s.id);
+                    return (
+                      <div key={s.id} onClick={() => toggle(s.id)} style={{
+                        display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer',
+                        padding: '6px 11px', borderRadius: 8,
+                        border: `1px solid ${sel ? hf.primary : hf.border}`,
+                        background: sel ? hf.primarySoft : hf.surface,
+                      }}>
+                        <span style={{
+                          width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                          background: sel ? hf.primary : hf.surface,
+                          border: `1.5px solid ${sel ? hf.primary : hf.faint}`,
+                          color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
+                        }}>{sel && '✓'}</span>
+                        <span style={{ ...hfText.small, color: hf.ink2, fontWeight: 600 }}>{s.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 };
