@@ -696,6 +696,7 @@ const HA3 = () => {
       {showAdd && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
           <StudentFormModal
+            defaultClassYearId={classFilter}
             onClose={() => setShowAdd(false)}
             onSaved={() => { setShowAdd(false); loadStudents(); }}
           />

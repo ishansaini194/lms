@@ -105,7 +105,7 @@ const ResponsibilityRow = ({ r, onRoster }) => (
     <span style={{ ...hfText.small, color: hf.muted, ...hfText.num }}>
       {r.student_count} students
     </span>
-    <Btn variant="ghost" size="sm" onClick={onRoster}>Roster</Btn>
+    <Btn variant="ghost" size="sm" onClick={onRoster}>Select</Btn>
   </div>
 );
 
@@ -249,14 +249,22 @@ export default function TeacherDashboard() {
         {/* Gentle, tap-to-enable push banner (hidden when unsupported/on/blocked). */}
         <EnableNotifications variant="banner" />
 
-        {/* Stat row */}
+        {/* Stat row — each tile navigates to the matching section. */}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 14 }}>
-          <Stat label="Classes I teach" value={responsibilities.length} icon={I.grid}
-            hint={`across ${distinctClasses} ${distinctClasses === 1 ? 'class' : 'classes'}`} />
-          <Stat label="Students" value={data?.total_students ?? 0} icon={I.user} hint="total load" />
-          <Stat label="Exams to action" value={exams.length} icon={I.chart}
-            tone={exams.length > 0 ? 'accent' : undefined} hint="needs marks or upcoming" />
-          <Stat label="Homework posted" value={homework.length} icon={I.book} hint="recent" />
+          <div className="hf-clickable" onClick={() => navigate('/teacher/classes')}>
+            <Stat label="Classes I teach" value={responsibilities.length} icon={I.grid}
+              hint={`across ${distinctClasses} ${distinctClasses === 1 ? 'class' : 'classes'}`} />
+          </div>
+          <div className="hf-clickable" onClick={() => navigate('/teacher/classes')}>
+            <Stat label="Students" value={data?.total_students ?? 0} icon={I.user} hint="total load" />
+          </div>
+          <div className="hf-clickable" onClick={() => navigate('/teacher/marks')}>
+            <Stat label="Exams to action" value={exams.length} icon={I.chart}
+              tone={exams.length > 0 ? 'accent' : undefined} hint="needs marks or upcoming" />
+          </div>
+          <div className="hf-clickable" onClick={() => navigate('/teacher/homework')}>
+            <Stat label="Homework posted" value={homework.length} icon={I.book} hint="recent" />
+          </div>
         </div>
 
         {/* Two-column grid */}

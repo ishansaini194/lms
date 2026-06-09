@@ -29,12 +29,15 @@ const Group = ({ title, children }) => (
   </div>
 );
 
-const StudentFormModal = ({ onClose, onSaved, initial }) => {
+const StudentFormModal = ({ onClose, onSaved, initial, defaultClassYearId }) => {
   const isEdit = !!initial;
   const [f, setF] = useState({
     name: '', admission_no: '', epunjab_id: '', gender: '',
     dob: '', phone: '', email: '', aadhar_no: '',
-    caste: '', address: '', class_year_id: '',
+    caste: '', address: '',
+    // New students default to the class the admin is currently viewing/filtering
+    // (still changeable). Edit mode keeps the spread-in value.
+    class_year_id: defaultClassYearId ? String(defaultClassYearId) : '',
     father_name: '', father_contact: '', father_aadhar: '',
     mother_name: '', mother_contact: '', mother_aadhar: '',
     previous_school: '',
@@ -1171,7 +1174,7 @@ const HA7Modal = ({ onClose, onSaved, initial, academicYearId, onManageTerms }) 
 
           <div>
             <FieldLabel required>Exam name</FieldLabel>
-            <FInput value={f.name} onChange={set('name')} placeholder="e.g. Mid-Term" />
+            <FInput value={f.name} onChange={set('name')} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr 1.2fr', gap: 12 }}>
@@ -1181,7 +1184,7 @@ const HA7Modal = ({ onClose, onSaved, initial, academicYearId, onManageTerms }) 
             </div>
             <div>
               <FieldLabel required>Max marks</FieldLabel>
-              <FInput type="number" value={f.max_marks} onChange={set('max_marks')} placeholder="50" />
+              <FInput type="number" value={f.max_marks} onChange={set('max_marks')} />
             </div>
             <div>
               <FieldLabel>Date</FieldLabel>
