@@ -48,64 +48,74 @@ export const TEACHER_EXPORT_FIELDS = STUDENT_EXPORT_FIELDS.filter((f) => f.key !
 // Sensible defaults so the form opens "ready to export".
 const DEFAULT_KEYS = ['name', 'admission_no', 'class_label', 'gender', 'dob', 'phone', 'father_name', 'father_contact'];
 
+// ── file delivery (cross-device) ───────────────────────────────────────────────
+// Phones can't reliably take an <a download> blob (iOS Safari opens it as a page
+// instead of saving). The Web Share API (Level 2, with files) is the native way
+// to save/share a file on mobile — it opens the system sheet (Save to Files,
+// share to WhatsApp/Drive, etc.). Desktop browsers fall back to a normal download.
+// Returns true on success, false if the user cancelled the share sheet.
+async function deliverFile(filename, blob, title) {
+  const file = new File([blob], filename, { type: blob.type });
+  // Mobile: native share/save sheet. Guarded by canShare({files}) so we only try
+  // it where file sharing is actually supported (and the context is secure).
+  if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title });
+      return true;
+    } catch (e) {
+      if (e && e.name === 'AbortError') return false; // user dismissed the sheet
+      // Anything else (e.g. share not allowed) → fall through to download.
+    }
+  }
+  // Desktop / unsupported: classic anchor download.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+  return true;
+}
+
 // ── generators ────────────────────────────────────────────────────────────────
 function csvCell(v) {
   const s = v == null ? '' : String(v);
   return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-function downloadCSV(filename, rows, fields) {
+async function exportCSV(filename, rows, fields, title) {
   const header = fields.map((f) => csvCell(f.label)).join(',');
   const body = rows.map((r) => fields.map((f) => csvCell(f.get(r))).join(',')).join('\r\n');
-  const csv = `${header}\r\n${body}`;
-  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' }); // BOM → Excel reads UTF-8
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename.endsWith('.csv') ? filename : `${filename}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  const blob = new Blob(['﻿' + header + '\r\n' + body], { type: 'text/csv;charset=utf-8' }); // BOM → Excel reads UTF-8
+  return deliverFile(filename.endsWith('.csv') ? filename : `${filename}.csv`, blob, title);
 }
 
-const htmlEsc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
-// Renders the rows into a hidden iframe and triggers the browser's print dialog,
-// where the user picks "Save as PDF". An iframe (not window.open) so there's no
-// popup-blocker issue — this can run after an async fetch — and it doesn't touch
-// the app's own print styles.
-function exportPDF(title, subtitle, rows, fields) {
-  const thead = fields.map((f) => `<th>${htmlEsc(f.label)}</th>`).join('');
-  const tbody = rows.map((r) =>
-    `<tr>${fields.map((f) => `<td>${htmlEsc(f.get(r))}</td>`).join('')}</tr>`).join('');
-  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${htmlEsc(title)}</title>
-  <style>
-    body { font-family: Arial, Helvetica, sans-serif; color: #111; padding: 24px; }
-    h1 { font-size: 18px; margin: 0 0 2px; }
-    .meta { font-size: 12px; color: #555; margin-bottom: 16px; }
-    table { border-collapse: collapse; width: 100%; font-size: 11px; }
-    th, td { border: 1px solid #999; padding: 5px 7px; text-align: left; vertical-align: top; }
-    th { background: #eee; }
-    tr:nth-child(even) td { background: #f7f7f7; }
-    @media print { @page { size: landscape; margin: 12mm; } }
-  </style></head><body>
-    <h1>${htmlEsc(title)}</h1>
-    <div class="meta">${htmlEsc(subtitle)}</div>
-    <table><thead><tr>${thead}</tr></thead><tbody>${tbody}</tbody></table>
-  </body></html>`;
-
-  const iframe = document.createElement('iframe');
-  iframe.setAttribute('aria-hidden', 'true');
-  iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
-  document.body.appendChild(iframe);
-  const cw = iframe.contentWindow;
-  cw.document.open();
-  cw.document.write(html);
-  cw.document.close();
-  const cleanup = () => setTimeout(() => iframe.remove(), 1000);
-  cw.onafterprint = cleanup;
-  setTimeout(() => { cw.focus(); cw.print(); cleanup(); }, 300);
+// Real PDF (jsPDF + autotable) → a proper file that saves/shares on every device,
+// unlike the old print-dialog approach which mobile browsers don't support.
+async function exportPDF(filename, title, subtitle, rows, fields) {
+  const { jsPDF } = await import('jspdf');
+  const { default: autoTable } = await import('jspdf-autotable');
+  const landscape = fields.length > 5;
+  const doc = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+  doc.setFontSize(14);
+  doc.text(title, 40, 40);
+  doc.setFontSize(10);
+  doc.setTextColor(110);
+  doc.text(subtitle, 40, 57);
+  autoTable(doc, {
+    startY: 72,
+    head: [fields.map((f) => f.label)],
+    body: rows.map((r) => fields.map((f) => { const v = f.get(r); return v == null ? '' : String(v); })),
+    styles: { fontSize: 8, cellPadding: 4, overflow: 'linebreak' },
+    headStyles: { fillColor: [37, 99, 235], textColor: 255 },
+    alternateRowStyles: { fillColor: [247, 247, 247] },
+    margin: { left: 40, right: 40 },
+  });
+  const blob = doc.output('blob');
+  return deliverFile(filename.endsWith('.pdf') ? filename : `${filename}.pdf`, blob, title);
 }
 
 // Pull every active (and optionally inactive) student for a class-year, across
@@ -152,7 +162,7 @@ const CheckRow = ({ checked, onChange, label }) => (
 
 const FormatPicker = ({ format, setFormat }) => (
   <div style={{ display: 'flex', gap: 16 }}>
-    {[{ k: 'csv', l: 'CSV (.csv)' }, { k: 'pdf', l: 'PDF (print)' }].map((o) => (
+    {[{ k: 'csv', l: 'CSV (.csv)' }, { k: 'pdf', l: 'PDF (.pdf)' }].map((o) => (
       <label key={o.k} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', ...hfText.small, color: hf.ink2 }}>
         <input type="radio" name="export-format" checked={format === o.k} onChange={() => setFormat(o.k)} style={{ width: 15, height: 15, accentColor: hf.primary, cursor: 'pointer' }} />
         {o.l}
@@ -238,12 +248,11 @@ export function ExportStudentsModal({
 
       const stamp = new Date().toISOString().slice(0, 10);
       const title = `${school?.name || 'School'} — Students`;
-      if (format === 'csv') {
-        downloadCSV(`students_${stamp}`, rows, selectedFields);
-      } else {
-        exportPDF(title, `${rows.length} student(s) · Generated ${new Date().toLocaleString()}`, rows, selectedFields);
-      }
-      onClose?.();
+      const subtitle = `${rows.length} student(s) · Generated ${new Date().toLocaleString()}`;
+      const ok = format === 'csv'
+        ? await exportCSV(`students_${stamp}`, rows, selectedFields, title)
+        : await exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields);
+      if (ok) onClose?.();
     } catch (e) {
       setErr(e.message || 'Export failed.');
     } finally {
@@ -318,21 +327,25 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
   const [format, setFormat] = useState('csv');
   const [err, setErr] = useState('');
 
-  const run = () => {
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
     setErr('');
     if (selectedFields.length === 0) { setErr('Pick at least one field to export.'); return; }
+    setBusy(true);
     try {
       const stamp = new Date().toISOString().slice(0, 10);
       const safeName = (student.name || 'student').replace(/[^\w-]+/g, '_');
-      if (format === 'csv') {
-        downloadCSV(`${safeName}_${stamp}`, [student], selectedFields);
-      } else {
-        const title = `${student.name || 'Student'}${student.admission_no ? ` · ${student.admission_no}` : ''}`;
-        exportPDF(title, `${school?.name || 'School'} · Generated ${new Date().toLocaleString()}`, [student], selectedFields);
-      }
-      onClose?.();
+      const title = `${student.name || 'Student'}${student.admission_no ? ` · ${student.admission_no}` : ''}`;
+      const subtitle = `${school?.name || 'School'} · Generated ${new Date().toLocaleString()}`;
+      const ok = format === 'csv'
+        ? await exportCSV(`${safeName}_${stamp}`, [student], selectedFields, title)
+        : await exportPDF(`${safeName}_${stamp}`, title, subtitle, [student], selectedFields);
+      if (ok) onClose?.();
     } catch (e) {
       setErr(e.message || 'Export failed.');
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -343,8 +356,8 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
         subtitle={student?.name || ''}
         width={460}
         footer={<>
-          <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
-          <Btn variant="primary" size="md" onClick={run}>Export</Btn>
+          <Btn variant="ghost" size="md" onClick={onClose} disabled={busy}>Cancel</Btn>
+          <Btn variant="primary" size="md" onClick={run} disabled={busy}>{busy ? 'Preparing…' : 'Export'}</Btn>
         </>}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
