@@ -178,6 +178,14 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	// Exam Terms (school-wide terms that group subject-exams). Reads are open to
 	// teachers too (the teacher exam-create modal needs the term picker); the
 	// list handler self-scopes by the JWT school. Mutations stay admin-only.
+	// Subjects (per-school master list)
+	subjectsHandler := handlers.NewSubjectsHandler(db)
+	subjects := api.Group("/subjects", middleware.AuthRequired())
+	subjects.Get("/", subjectsHandler.List) // all roles
+	subjects.Post("/", middleware.RequireRole("admin"), subjectsHandler.Create)
+	subjects.Put("/:id", middleware.RequireRole("admin"), subjectsHandler.Update)
+	subjects.Delete("/:id", middleware.RequireRole("admin"), subjectsHandler.Delete)
+
 	examTermsHandler := handlers.NewExamTermsHandler(db)
 
 	examTerms := api.Group("/exam-terms", middleware.AuthRequired())
@@ -229,10 +237,10 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	libraryHandler := handlers.NewLibraryHandler(db, "uploads/library")
 
 	library := api.Group("/library", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
-	library.Get("/classes", libraryHandler.Classes)
 	library.Get("/", libraryHandler.List)
-	library.Post("/", libraryHandler.Upload)
 	library.Get("/:id/download", libraryHandler.Download)
+	library.Get("/:id", libraryHandler.GetOne)
+	library.Post("/", libraryHandler.Upload)
 	library.Delete("/:id", libraryHandler.Delete)
 
 	// Teaching Assignments (admin manages who teaches what)

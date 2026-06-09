@@ -22,14 +22,14 @@ func NewHomeworksHandler(db *gorm.DB) *HomeworksHandler {
 
 type CreateHomeworkRequest struct {
 	TeacherID    uint       `json:"teacher_id"`
-	Subject      string     `json:"subject"`
+	SubjectID    *uint      `json:"subject_id,omitempty"` // optional
 	Content      string     `json:"content"`
 	DueDate      *time.Time `json:"due_date,omitempty"`
 	ClassYearIDs []uint     `json:"class_year_ids"`
 }
 
 type UpdateHomeworkRequest struct {
-	Subject      *string    `json:"subject,omitempty"`
+	SubjectID    *uint      `json:"subject_id,omitempty"` // always applied on edit (nil clears)
 	Content      *string    `json:"content,omitempty"`
 	DueDate      *time.Time `json:"due_date,omitempty"`
 	ClassYearIDs *[]uint    `json:"class_year_ids,omitempty"` // nil = leave targets unchanged
@@ -148,7 +148,31 @@ func (h *HomeworksHandler) enrichHomeworks(schoolID uint, homeworks []models.Hom
 			items[i].ClassLabels = append(items[i].ClassLabels, label)
 		}
 	}
+
+	stampHomeworkSubjects(h.DB, schoolID, items)
 	return items
+}
+
+// stampHomeworkSubjects fills SubjectName on each item from its SubjectID via
+// one batched lookup. Works for homeworkListItem (embeds Homework).
+func stampHomeworkSubjects(db *gorm.DB, schoolID uint, items []homeworkListItem) {
+	ids := []uint{}
+	seen := map[uint]bool{}
+	for i := range items {
+		if items[i].SubjectID != nil && !seen[*items[i].SubjectID] {
+			seen[*items[i].SubjectID] = true
+			ids = append(ids, *items[i].SubjectID)
+		}
+	}
+	names := subjectNamesByID(db, schoolID, ids)
+	for i := range items {
+		if items[i].SubjectID != nil {
+			if name, ok := names[*items[i].SubjectID]; ok {
+				n := name
+				items[i].SubjectName = &n
+			}
+		}
+	}
 }
 
 // GET /api/homeworks/:id  (includes target class_year IDs)
@@ -209,22 +233,22 @@ func (h *HomeworksHandler) Create(c *fiber.Ctx) error {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher not found in this school"})
 		}
 	}
-	body.Subject = strings.TrimSpace(body.Subject)
 	body.Content = strings.TrimSpace(body.Content)
-	if body.Subject == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject is required"})
-	}
 	if body.Content == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "content is required"})
 	}
 	if len(body.ClassYearIDs) == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "at least one class_year_id is required"})
 	}
+	// Subject is optional; when given it must belong to this school.
+	if body.SubjectID != nil && !subjectExistsInSchool(h.DB, *body.SubjectID, schoolID) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject not found in this school"})
+	}
 
 	homework := models.Homework{
 		SchoolID:  schoolID,
 		TeacherID: body.TeacherID,
-		Subject:   body.Subject,
+		SubjectID: body.SubjectID,
 		Content:   body.Content,
 		DueDate:   body.DueDate,
 		IsActive:  true,
@@ -274,13 +298,12 @@ func (h *HomeworksHandler) Update(c *fiber.Ctx) error {
 		}
 
 		updates := map[string]interface{}{}
-		if body.Subject != nil {
-			s := strings.TrimSpace(*body.Subject)
-			if s == "" {
-				return &httpError{fiber.StatusBadRequest, "subject cannot be empty"}
-			}
-			updates["subject"] = s
+		// Subject is always applied on edit — the modal sends the current value
+		// (or null to clear). Validate when set.
+		if body.SubjectID != nil && !subjectExistsInSchool(tx, *body.SubjectID, schoolID) {
+			return &httpError{fiber.StatusBadRequest, "subject not found in this school"}
 		}
+		updates["subject_id"] = body.SubjectID
 		if body.Content != nil {
 			ct := strings.TrimSpace(*body.Content)
 			if ct == "" {

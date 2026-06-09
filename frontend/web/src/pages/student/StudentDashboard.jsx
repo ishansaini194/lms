@@ -126,7 +126,7 @@ const HomeworkLine = ({ h }) => {
     <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, padding: '3px 2px' }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ ...hfText.body, fontWeight: 700, color: hf.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {h.subject}
+          {h.subject_name || 'Homework'}
         </div>
         <div style={{ ...hfText.small, color: hf.inkSoft, marginTop: 1 }}>{truncate(h.content, 60)}</div>
       </div>

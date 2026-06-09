@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom';
 import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
-import { Card, Pill, Btn, ModalShell, FInput, FTextarea } from '@/components/ui/primitives';
+import { Card, Pill, Btn, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
@@ -83,7 +83,7 @@ const HomeworkRow = ({ hw, onEdit, onDelete }) => {
     }}>
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-          <span style={{ ...hfText.body, fontWeight: 700, color: hf.ink }}>{hw.subject}</span>
+          <span style={{ ...hfText.body, fontWeight: 700, color: hw.subject_name ? hf.ink : hf.muted }}>{hw.subject_name || 'Homework'}</span>
           {(hw.class_labels || []).map((l, i) => <ClassChip key={i} label={l} />)}
         </div>
         <div style={{ ...hfText.small, color: hf.inkSoft, marginTop: 3 }}>{truncate(hw.content)}</div>
@@ -103,13 +103,13 @@ const HomeworkRow = ({ hw, onEdit, onDelete }) => {
   );
 };
 
-const HomeworkModal = ({ classes, initial, preselectClassId, onClose, onSaved }) => {
+const HomeworkModal = ({ classes, subjects, initial, preselectClassId, onClose, onSaved }) => {
   const isEdit = !!initial;
   const [selectedIds, setSelectedIds] = useState(
     initial?.class_year_ids?.length ? initial.class_year_ids
       : (preselectClassId ? [preselectClassId] : [])
   );
-  const [subject, setSubject] = useState(initial?.subject || '');
+  const [subjectId, setSubjectId] = useState(initial?.subject_id ? String(initial.subject_id) : '');
   const [content, setContent] = useState(initial?.content || '');
   const [due, setDue] = useState(initial?.due_date ? String(initial.due_date).slice(0, 10) : '');
   const [saving, setSaving] = useState(false);
@@ -120,13 +120,13 @@ const HomeworkModal = ({ classes, initial, preselectClassId, onClose, onSaved })
   const save = async () => {
     setErr('');
     if (selectedIds.length === 0) { setErr('Select at least one class.'); return; }
-    if (!subject.trim()) { setErr('Subject is required.'); return; }
     if (!content.trim()) { setErr('Content is required.'); return; }
     setSaving(true);
     try {
-      // Always send class_year_ids so target changes apply on edit. Don't send
-      // teacher_id — the backend forces it from the JWT for teachers.
-      const body = { subject: subject.trim(), content: content.trim(), class_year_ids: selectedIds };
+      // Always send class_year_ids + subject_id so target/subject changes apply on
+      // edit. subject_id is optional (null = none). Don't send teacher_id — the
+      // backend forces it from the JWT for teachers.
+      const body = { subject_id: subjectId ? Number(subjectId) : null, content: content.trim(), class_year_ids: selectedIds };
       if (due) body.due_date = new Date(due).toISOString();
       if (isEdit) await apiFetch(`/api/homeworks/${initial.id}`, { method: 'PUT', body });
       else await apiFetch('/api/homeworks', { method: 'POST', body });
@@ -182,8 +182,8 @@ const HomeworkModal = ({ classes, initial, preselectClassId, onClose, onSaved })
           </div>
 
           <div>
-            <FieldLabel>Subject</FieldLabel>
-            <FInput value={subject} onChange={setSubject} placeholder="e.g. Mathematics" />
+            <FieldLabel>Subject <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
+            <FSelect value={subjectId} onChange={setSubjectId} options={[{ value: '', label: 'No subject' }, ...subjects.map(s => ({ value: String(s.id), label: s.name }))]} />
           </div>
 
           <div>
@@ -214,7 +214,7 @@ const ConfirmDelete = ({ hw, onCancel, onConfirm, busy, error }) => (
       </>}
     >
       <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
-        Delete the <b>{hw.subject}</b> homework? Students will no longer see it.
+        Delete the <b>{hw.subject_name || 'selected'}</b> homework? Students will no longer see it.
       </div>
       {error && <div style={{ marginTop: 12 }}><ErrorBox>{error}</ErrorBox></div>}
     </ModalShell>
@@ -246,6 +246,7 @@ export default function TeacherHomework() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [classes, setClasses] = useState([]);
+  const [subjects, setSubjects] = useState([]); // [{id, name}] active subjects
   const [filterId, setFilterId] = useState(null); // null = All
 
   const [creating, setCreating] = useState(false);
@@ -260,12 +261,14 @@ export default function TeacherHomework() {
     setLoading(true);
     setError('');
     try {
-      const [hw, dash] = await Promise.all([
+      const [hw, dash, subs] = await Promise.all([
         apiFetch('/api/homeworks'),
         apiFetch('/api/teacher/dashboard'),
+        apiFetch('/api/subjects').catch(() => []),
       ]);
       setList(Array.isArray(hw) ? hw : []);
       setClasses(buildClasses(dash?.responsibilities));
+      setSubjects(Array.isArray(subs) ? subs : []);
     } catch (e) {
       setError(e.message || 'Failed to load homework');
     } finally {
@@ -376,6 +379,7 @@ export default function TeacherHomework() {
       {creating && (
         <HomeworkModal
           classes={classes}
+          subjects={subjects}
           preselectClassId={createSeed}
           onClose={closeCreate}
           onSaved={() => { closeCreate(); loadAll(); }}
@@ -384,6 +388,7 @@ export default function TeacherHomework() {
       {editing && (
         <HomeworkModal
           classes={classes}
+          subjects={subjects}
           initial={editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); loadAll(); }}

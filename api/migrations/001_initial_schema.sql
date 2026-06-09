@@ -302,13 +302,27 @@ CREATE TABLE
 
 CREATE INDEX idx_notice_targets_class ON notice_targets (class_year_id);
 
+-- subjects (per-school master list; referenced by homeworks + library)
+CREATE TABLE
+    subjects (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        name VARCHAR(100) NOT NULL,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
+        UNIQUE (school_id, name)
+    );
+
+CREATE INDEX idx_subjects_school ON subjects (school_id);
+
 -- homeworks
 CREATE TABLE
     homeworks (
         id BIGSERIAL PRIMARY KEY,
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         teacher_id BIGINT NOT NULL REFERENCES teachers (id) ON DELETE RESTRICT,
-        subject VARCHAR(100) NOT NULL,
+        subject_id BIGINT REFERENCES subjects (id),
         content TEXT NOT NULL,
         due_date DATE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
@@ -435,20 +449,16 @@ CREATE INDEX idx_assessment_marks_school ON assessment_marks (school_id);
 
 CREATE INDEX idx_assessment_marks_enrollment ON assessment_marks (enrollment_id);
 
--- library
+-- library (notes/pyq PDFs, targeted to one or more class_years via library_targets)
 CREATE TABLE
     library (
         id BIGSERIAL PRIMARY KEY,
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
-        uploaded_by_id BIGINT REFERENCES users (id) ON DELETE SET NULL,
-        academic_year_id BIGINT REFERENCES academic_years (id) ON DELETE SET NULL,
-        category VARCHAR(50) NOT NULL,
-        subject VARCHAR(100),
-        class_number INTEGER, -- legacy; superseded by class_id
-        class_id BIGINT REFERENCES classes (id) ON DELETE SET NULL,
+        uploaded_by_id BIGINT NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
+        category VARCHAR(20) NOT NULL, -- 'notes' | 'pyq'
+        subject_id BIGINT REFERENCES subjects (id),
         title VARCHAR(200) NOT NULL,
-        description TEXT,
-        file_url VARCHAR(500) NOT NULL,
+        file_url TEXT NOT NULL,
         file_size BIGINT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW ()
@@ -458,9 +468,14 @@ CREATE INDEX idx_library_school ON library (school_id);
 
 CREATE INDEX idx_library_school_category ON library (school_id, category);
 
-CREATE INDEX idx_library_class ON library (class_number);
+CREATE TABLE
+    library_targets (
+        library_id BIGINT NOT NULL REFERENCES library (id) ON DELETE CASCADE,
+        class_year_id BIGINT NOT NULL REFERENCES class_years (id),
+        PRIMARY KEY (library_id, class_year_id)
+    );
 
-CREATE INDEX idx_library_class_id ON library (class_id);
+CREATE INDEX idx_library_targets_class ON library_targets (class_year_id);
 
 -- audit_logs
 CREATE TABLE

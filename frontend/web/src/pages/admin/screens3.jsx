@@ -1241,6 +1241,129 @@ const FeePlansPanel = ({ academicYearId, yearLabel }) => {
   );
 };
 
+// Settings → Subjects: the per-school master list. First master-data screen.
+const SubjectsPanel = () => {
+  const [subjects, setSubjects] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [status, setStatus] = useState('active'); // 'active' | 'inactive'
+
+  const [newName, setNewName] = useState('');
+  const [adding, setAdding] = useState(false);
+  const [addErr, setAddErr] = useState('');
+
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [rowErr, setRowErr] = useState('');
+
+  const load = () => {
+    setLoading(true);
+    apiFetch('/api/subjects?include_inactive=true')
+      .then((d) => { setSubjects(Array.isArray(d) ? d : []); setError(null); })
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+
+  const add = async () => {
+    const n = newName.trim();
+    if (!n) return;
+    setAdding(true); setAddErr('');
+    try {
+      await apiFetch('/api/subjects', { method: 'POST', body: { name: n } });
+      setNewName('');
+      load();
+    } catch (e) { setAddErr(e.message || 'Failed to add subject'); }
+    finally { setAdding(false); }
+  };
+
+  const startEdit = (s) => { setRowErr(''); setEditingId(s.id); setEditName(s.name); };
+  const saveRename = async (s) => {
+    const n = editName.trim();
+    if (!n || n === s.name) { setEditingId(null); return; }
+    setRowErr('');
+    try {
+      await apiFetch(`/api/subjects/${s.id}`, { method: 'PUT', body: { name: n } });
+      setEditingId(null);
+      load();
+    } catch (e) { setRowErr(e.message || 'Rename failed'); }
+  };
+
+  const setActive = async (s, active) => {
+    setRowErr('');
+    try {
+      if (active) await apiFetch(`/api/subjects/${s.id}`, { method: 'PUT', body: { is_active: true } });
+      else await apiFetch(`/api/subjects/${s.id}`, { method: 'DELETE' });
+      load();
+    } catch (e) { setRowErr(e.message || 'Update failed'); }
+  };
+
+  const activeCount = subjects.filter((s) => s.is_active).length;
+  const visible = subjects.filter((s) => (status === 'active' ? s.is_active : !s.is_active));
+
+  return (
+    <Card padding={0}>
+      <PanelHead title="Subjects" subtitle="Master list used by homework and the library across your school" />
+
+      {/* Add row */}
+      <div style={{ padding: 14, borderBottom: `1px solid ${hf.borderS}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ flex: 1 }}>
+            <FInput value={newName} onChange={setNewName} placeholder="Add a subject (e.g. Mathematics)" onKeyDown={(e) => { if (e.key === 'Enter') add(); }} />
+          </div>
+          <Btn variant="primary" size="md" onClick={add} disabled={adding || !newName.trim()}>{adding ? 'Adding…' : 'Add subject'}</Btn>
+        </div>
+        {addErr && <span style={{ ...hfText.small, color: hf.accent }}>{addErr}</span>}
+      </div>
+
+      <div style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10, borderBottom: `1px solid ${hf.borderS}` }}>
+        <span style={{ ...hfText.small, color: hf.muted }}>{activeCount} active</span>
+        <div style={{ flex: 1 }} />
+        <Segmented items={['Active', 'Inactive']} active={status === 'inactive' ? 'Inactive' : 'Active'} onChange={(v) => setStatus(v.toLowerCase())} />
+      </div>
+
+      {rowErr && <div style={{ padding: '10px 14px', ...hfText.small, color: hf.accent }}>{rowErr}</div>}
+
+      {loading ? (
+        <div style={{ padding: 32, textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading…</div>
+      ) : error ? (
+        <div style={{ padding: 32, textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load: {error}</div>
+      ) : visible.length === 0 ? (
+        <div style={{ padding: 32, textAlign: 'center', ...hfText.small, color: hf.muted }}>
+          {status === 'active' ? 'No subjects yet. Add the first one above.' : 'No inactive subjects.'}
+        </div>
+      ) : (
+        visible.map((s, i) => (
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '11px 14px', borderBottom: i === visible.length - 1 ? 'none' : `1px solid ${hf.borderS}` }}>
+            {editingId === s.id ? (
+              <>
+                <div style={{ flex: 1 }}>
+                  <FInput value={editName} onChange={setEditName} onKeyDown={(e) => { if (e.key === 'Enter') saveRename(s); if (e.key === 'Escape') setEditingId(null); }} />
+                </div>
+                <Btn variant="primary" size="sm" onClick={() => saveRename(s)}>Save</Btn>
+                <Btn variant="ghost" size="sm" onClick={() => setEditingId(null)}>Cancel</Btn>
+              </>
+            ) : (
+              <>
+                <span style={{ ...hfText.body, fontWeight: 600, color: s.is_active ? hf.ink : hf.muted, flex: 1 }}>{s.name}</span>
+                {!s.is_active && <Pill tone="neutral">Inactive</Pill>}
+                {s.is_active ? (
+                  <>
+                    <Btn variant="ghost" size="sm" onClick={() => startEdit(s)}>Rename</Btn>
+                    <Btn variant="ghost" size="sm" onClick={() => setActive(s, false)}>Deactivate</Btn>
+                  </>
+                ) : (
+                  <Btn variant="ghost" size="sm" onClick={() => setActive(s, true)}>Reactivate</Btn>
+                )}
+              </>
+            )}
+          </div>
+        ))
+      )}
+    </Card>
+  );
+};
+
 const HA9 = () => {
   const [tab, setTab] = useState('years');
   const [yearModal, setYearModal] = useState(null); // null | 'create' | initial-object
@@ -1324,10 +1447,13 @@ const HA9 = () => {
       <Tabs items={[
         { label: 'School profile',  id: 'profile' },
         { label: 'Academic years',  id: 'years' },
+        { label: 'Subjects',        id: 'subjects' },
         { label: 'Users & roles',   id: 'users' },
         { label: 'Fee plans',       id: 'fees' },
         { label: 'Audit log',       id: 'audit' },
       ]} active={tab} onChange={setTab} />
+
+      {tab === 'subjects' && <SubjectsPanel />}
 
       {tab === 'profile' && (
         school

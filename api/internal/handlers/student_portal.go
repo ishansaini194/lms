@@ -310,6 +310,24 @@ func (h *StudentPortalHandler) Homework(c *fiber.Ctx) error {
 		Find(&homeworks).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch homework"})
 	}
+
+	subjIDs := []uint{}
+	seen := map[uint]bool{}
+	for _, hw := range homeworks {
+		if hw.SubjectID != nil && !seen[*hw.SubjectID] {
+			seen[*hw.SubjectID] = true
+			subjIDs = append(subjIDs, *hw.SubjectID)
+		}
+	}
+	names := subjectNamesByID(h.DB, schoolID, subjIDs)
+	for i := range homeworks {
+		if homeworks[i].SubjectID != nil {
+			if n, ok := names[*homeworks[i].SubjectID]; ok {
+				nm := n
+				homeworks[i].SubjectName = &nm
+			}
+		}
+	}
 	return c.JSON(homeworks)
 }
 
@@ -367,34 +385,54 @@ func (h *StudentPortalHandler) AssessmentMarks(c *fiber.Ctx) error {
 	return c.JSON(marks)
 }
 
-// GET /api/me/library — library files for the student's school.
-// Library content (syllabus, notes, datesheets) is shared educational material,
-// not per-student private data, so students see all of their school's files —
-// same as teachers. Optional filters: ?category=&subject=
+// GET /api/me/library?category=
+// Access differs by category:
+//   - PYQ: OPEN — any student may see every class's PYQs. The class target is
+//     organizational only (buckets PYQs in the picker), never access control.
+//   - Notes (and anything else): scoped to the student's ACTIVE class-year
+//     targets, like homework.
+// Each item carries its target class IDs/labels + subject name for the UI.
 func (h *StudentPortalHandler) Library(c *fiber.Ctx) error {
-	_, ok := h.studentID(c)
+	sid, ok := h.studentID(c)
 	if !ok {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
 	}
 	schoolID := middleware.GetSchoolID(c)
-
 	category := strings.TrimSpace(c.Query("category"))
-	subject := strings.TrimSpace(c.Query("subject"))
 
-	query := h.DB.Where("school_id = ?", schoolID)
-	if category != "" {
-		query = query.Where("category = ?", category)
+	// PYQ door: open to all classes, no target scoping.
+	if category == "pyq" {
+		var files []models.Library
+		if err := h.DB.Where("school_id = ? AND category = ?", schoolID, "pyq").
+			Order("created_at DESC").
+			Find(&files).Error; err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch library files"})
+		}
+		return c.JSON(enrichLibrary(h.DB, schoolID, files))
 	}
-	if subject != "" {
-		query = query.Where("subject = ?", subject)
+
+	// Notes / default: scoped to the student's active class-year targets.
+	classYearIDs, err := h.activeClassYearIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	if len(classYearIDs) == 0 {
+		return c.JSON([]libraryListItem{})
+	}
+
+	query := h.DB.Model(&models.Library{}).
+		Joins("JOIN library_targets ON library_targets.library_id = library.id").
+		Where("library.school_id = ? AND library_targets.class_year_id IN ?", schoolID, classYearIDs).
+		Group("library.id")
+	if category != "" {
+		query = query.Where("library.category = ?", category)
 	}
 
 	var files []models.Library
-	if err := query.Order("created_at DESC").Find(&files).Error; err != nil {
+	if err := query.Order("library.created_at DESC").Find(&files).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch library files"})
 	}
-	stampClassNames(h.DB, schoolID, files)
-	return c.JSON(files)
+	return c.JSON(enrichLibrary(h.DB, schoolID, files))
 }
 
 // GET /api/me/library/:id/download — stream a library file from the student's school.

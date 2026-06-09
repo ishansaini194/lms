@@ -81,7 +81,7 @@ const HomeworkCard = ({ h, onOpen }) => {
       <div style={{ padding: '14px 16px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 6 }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ ...hfText.h2, fontSize: 15, lineHeight: 1.3 }}>{h.subject}</div>
+            <div style={{ ...hfText.h2, fontSize: 15, lineHeight: 1.3 }}>{h.subject_name || 'Homework'}</div>
           </div>
           <Pill tone={due.tone} style={{ flexShrink: 0 }}>{due.label}</Pill>
         </div>
@@ -99,7 +99,7 @@ const HomeworkDetail = ({ h, onClose }) => {
   return (
     <Overlay onClose={onClose}>
       <ModalShell
-        title={h.subject}
+        title={h.subject_name || 'Homework'}
         subtitle={formatDateLong(h.due_date)}
         width={560}
         footer={<Btn variant="ghost" size="md" onClick={onClose}>Close</Btn>}

@@ -330,10 +330,21 @@ func (h *TeacherDashboardHandler) Dashboard(c *fiber.Ctx) error {
 		Order("due_date DESC NULLS LAST, id DESC").
 		Limit(5).
 		Find(&hw)
+	hwSubjIDs := []uint{}
 	for _, x := range hw {
+		if x.SubjectID != nil {
+			hwSubjIDs = append(hwSubjIDs, *x.SubjectID)
+		}
+	}
+	hwSubjNames := subjectNamesByID(h.DB, schoolID, hwSubjIDs)
+	for _, x := range hw {
+		subject := ""
+		if x.SubjectID != nil {
+			subject = hwSubjNames[*x.SubjectID]
+		}
 		resp.RecentHomework = append(resp.RecentHomework, tdHomework{
 			ID:      x.ID,
-			Subject: x.Subject,
+			Subject: subject,
 			Content: x.Content,
 			DueDate: x.DueDate,
 		})

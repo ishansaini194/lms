@@ -167,7 +167,7 @@ const NoticeRow = ({ n }) => (
 const HomeworkRow = ({ h }) => (
   <div style={{ padding: '4px 2px' }}>
     <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10 }}>
-      <span style={{ ...hfText.body, fontWeight: 700, color: hf.ink }}>{h.subject}</span>
+      <span style={{ ...hfText.body, fontWeight: 700, color: hf.ink }}>{h.subject || 'Homework'}</span>
       <span style={{ ...hfText.small, color: hf.muted, whiteSpace: 'nowrap' }}>
         {h.due_date ? `Due ${formatExamDate(h.due_date)}` : 'no due date'}
       </span>

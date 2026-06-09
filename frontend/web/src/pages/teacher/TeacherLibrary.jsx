@@ -2,26 +2,16 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
-import { Card, Pill, Btn, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
+import { Card, Pill, Btn, ModalShell, FInput, FSelect } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch, apiUpload, getToken } from '@/lib/api';
 
 // ── category system (must match the backend whitelist) ──────────────────────
 
-const CATEGORIES = ['syllabus', 'notes', 'pyq', 'datesheet', 'circular', 'other'];
-const CAT_LABEL = { syllabus: 'Syllabus', notes: 'Notes', pyq: 'PYQ', datesheet: 'Datesheet', circular: 'Circular', other: 'Other' };
-const CAT_TONE = { syllabus: 'primary', notes: 'good', pyq: 'warn', datesheet: 'accent', circular: 'neutral', other: 'neutral' };
+const CATEGORIES = ['notes', 'pyq'];
+const CAT_LABEL = { notes: 'Notes', pyq: 'PYQ' };
+const CAT_TONE = { notes: 'good', pyq: 'warn' };
 const MAX_SIZE = 25 * 1024 * 1024;
-
-// Grade label: prefix numeric grades with "Class" (Class 5), leave named ones
-// as-is (Nursery). Used for the class picker and the file's class column.
-const gradeLabel = (name) => (name != null && /^\d+$/.test(String(name)) ? `Class ${name}` : (name || ''));
-
-// Build <FSelect> options from the school's grades ([{class_id, label}]).
-const classOptions = (classes, allLabel) => [
-  { value: '', label: allLabel },
-  ...(classes || []).map((c) => ({ value: String(c.class_id), label: gradeLabel(c.label) })),
-];
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -40,8 +30,14 @@ function fmtDate(iso) {
   return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
 }
 
+// class_year → { id, grade, section, label } for the target picker / filters.
+function cyOption(cy) {
+  const name = cy.class?.name || '';
+  const section = cy.class?.section || '';
+  return { id: cy.id, grade: name, section, label: section ? `${name}-${section}` : name };
+}
+
 // Authenticated download: the endpoint needs the Bearer token, so a bare <a> 401s.
-// Fetch as a blob, then trigger a browser download.
 async function downloadFile(id, title, onError) {
   try {
     const res = await fetch(`/api/library/${id}/download`, { headers: { Authorization: `Bearer ${getToken()}` } });
@@ -95,15 +91,75 @@ const FileIcon = () => (
   }}>{I.book}</span>
 );
 
+// Multi-section target picker: sections grouped by grade, each grade with a
+// "select all sections" shortcut.
+const TargetPicker = ({ options, selectedIds, onChange }) => {
+  const grouped = useMemo(() => {
+    const m = new Map();
+    for (const o of options) {
+      if (!m.has(o.grade)) m.set(o.grade, []);
+      m.get(o.grade).push(o);
+    }
+    return [...m.entries()];
+  }, [options]);
+
+  const toggle = (id) => onChange(selectedIds.includes(id) ? selectedIds.filter(x => x !== id) : [...selectedIds, id]);
+  const toggleGrade = (ids, allOn) => onChange(allOn ? selectedIds.filter(x => !ids.includes(x)) : [...new Set([...selectedIds, ...ids])]);
+
+  if (options.length === 0) {
+    return <div style={{ ...hfText.small, color: hf.muted }}>No classes set up yet — ask your admin.</div>;
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxHeight: 240, overflowY: 'auto' }}>
+      {grouped.map(([grade, secs]) => {
+        const ids = secs.map(s => s.id);
+        const allOn = ids.every(id => selectedIds.includes(id));
+        const gradeLbl = /^\d+$/.test(String(grade)) ? `Class ${grade}` : grade;
+        return (
+          <div key={grade}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+              <span style={{ ...hfText.small, fontWeight: 700, color: hf.ink }}>{gradeLbl}</span>
+              <button onClick={() => toggleGrade(ids, allOn)} className="hf-btn" style={{
+                ...hfText.small, fontWeight: 600, color: allOn ? hf.accent : hf.primary,
+                background: 'transparent', border: 'none', cursor: 'pointer', padding: '2px 4px',
+              }}>{allOn ? 'Clear all' : 'All sections'}</button>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {secs.map(s => {
+                const sel = selectedIds.includes(s.id);
+                return (
+                  <div key={s.id} onClick={() => toggle(s.id)} style={{
+                    display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer',
+                    padding: '6px 11px', borderRadius: 8,
+                    border: `1px solid ${sel ? hf.primary : hf.border}`,
+                    background: sel ? hf.primarySoft : hf.surface,
+                  }}>
+                    <span style={{
+                      width: 16, height: 16, borderRadius: 4, flexShrink: 0,
+                      background: sel ? hf.primary : hf.surface,
+                      border: `1.5px solid ${sel ? hf.primary : hf.faint}`,
+                      color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 11,
+                    }}>{sel && '✓'}</span>
+                    <span style={{ ...hfText.small, color: hf.ink2, fontWeight: 600 }}>{s.label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ── Upload modal ────────────────────────────────────────────────────────────
 
-const UploadModal = ({ currentAY, classes, onClose, onSaved }) => {
+const UploadModal = ({ classYearOptions, subjects, onClose, onSaved }) => {
   const [file, setFile] = useState(null);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('notes');
-  const [subject, setSubject] = useState('');
-  const [classId, setClassId] = useState('');
-  const [description, setDescription] = useState('');
+  const [subjectId, setSubjectId] = useState('');
+  const [targetIds, setTargetIds] = useState([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
 
@@ -122,17 +178,15 @@ const UploadModal = ({ currentAY, classes, onClose, onSaved }) => {
     if (!file) { setErr('Choose a PDF file.'); return; }
     if (!title.trim()) { setErr('Title is required.'); return; }
     if (!category) { setErr('Pick a category.'); return; }
-    if (!currentAY?.id) { setErr('No current academic year set — contact your admin.'); return; }
+    if (targetIds.length === 0) { setErr('Select at least one class.'); return; }
     setBusy(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('title', title.trim());
       fd.append('category', category);
-      fd.append('academic_year_id', String(currentAY.id));
-      if (subject.trim()) fd.append('subject', subject.trim());
-      if (classId) fd.append('class_id', classId);
-      if (description.trim()) fd.append('description', description.trim());
+      if (subjectId) fd.append('subject_id', subjectId);
+      targetIds.forEach(id => fd.append('class_year_ids', String(id)));
       await apiUpload('/api/library', fd);
       onSaved?.();
     } catch (e) {
@@ -146,7 +200,7 @@ const UploadModal = ({ currentAY, classes, onClose, onSaved }) => {
     <Overlay onClose={onClose}>
       <ModalShell
         title="Upload file"
-        subtitle="Add a PDF to the school library"
+        subtitle="Share a PDF with one or more classes"
         width={540}
         footer={<>
           <Btn variant="ghost" size="md" onClick={onClose}>Cancel</Btn>
@@ -174,7 +228,7 @@ const UploadModal = ({ currentAY, classes, onClose, onSaved }) => {
 
           <div>
             <FieldLabel>Title</FieldLabel>
-            <FInput value={title} onChange={setTitle} placeholder="e.g. Class 5 Maths — Term 1 syllabus" />
+            <FInput value={title} onChange={setTitle} placeholder="e.g. Class 5 Maths — Term 1 notes" />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -183,23 +237,14 @@ const UploadModal = ({ currentAY, classes, onClose, onSaved }) => {
               <FSelect value={category} onChange={setCategory} options={CATEGORIES.map(c => ({ value: c, label: CAT_LABEL[c] }))} />
             </div>
             <div>
-              <FieldLabel>Class <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
-              <FSelect value={classId} onChange={setClassId} options={classOptions(classes, 'All classes / none')} />
+              <FieldLabel>Subject <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
+              <FSelect value={subjectId} onChange={setSubjectId} options={[{ value: '', label: 'No subject' }, ...subjects.map(s => ({ value: String(s.id), label: s.name }))]} />
             </div>
           </div>
 
           <div>
-            <FieldLabel>Subject <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
-            <FInput value={subject} onChange={setSubject} placeholder="e.g. Mathematics" />
-          </div>
-
-          <div>
-            <FieldLabel>Description <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
-            <FTextarea value={description} onChange={setDescription} rows={3} placeholder="A short note about this file…" />
-          </div>
-
-          <div style={{ ...hfText.small, color: hf.muted }}>
-            Academic year: <b style={{ color: hf.ink2 }}>{currentAY?.year_label || '—'}</b>
+            <FieldLabel>Classes · {targetIds.length} selected</FieldLabel>
+            <TargetPicker options={classYearOptions} selectedIds={targetIds} onChange={setTargetIds} />
           </div>
 
           {err && <ErrorBox>{err}</ErrorBox>}
@@ -236,8 +281,8 @@ export default function TeacherLibrary() {
   const [list, setList] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [currentAY, setCurrentAY] = useState(null);
-  const [classes, setClasses] = useState([]); // [{class_id, label}] grades for the picker
+  const [classYearOptions, setClassYearOptions] = useState([]); // [{id, grade, section, label}]
+  const [subjects, setSubjects] = useState([]); // [{id, name}] active subjects
   const [actionErr, setActionErr] = useState('');
 
   const [filterCat, setFilterCat] = useState(null); // null = All
@@ -253,15 +298,19 @@ export default function TeacherLibrary() {
     setLoading(true);
     setError('');
     try {
-      const [files, years, grades] = await Promise.all([
+      const [files, years, subs] = await Promise.all([
         apiFetch('/api/library'),
         apiFetch('/api/academic-years').catch(() => []),
-        apiFetch('/api/library/classes').catch(() => []),
+        apiFetch('/api/subjects').catch(() => []),
       ]);
       setList(Array.isArray(files) ? files : []);
+      setSubjects(Array.isArray(subs) ? subs : []);
       const cur = Array.isArray(years) && years.find(y => y.is_current);
-      setCurrentAY(cur ? { id: cur.id, year_label: cur.year_label } : null);
-      setClasses(Array.isArray(grades) ? grades : []);
+      // All active sections in the school for the current year — teachers may
+      // target any section (scope=all bypasses the own-classes filter).
+      const cyUrl = cur ? `/api/class-years?scope=all&academic_year_id=${cur.id}` : '/api/class-years?scope=all';
+      const cys = await apiFetch(cyUrl).catch(() => []);
+      setClassYearOptions(Array.isArray(cys) ? cys.map(cyOption) : []);
     } catch (e) {
       setError(e.message || 'Failed to load the library');
     } finally {
@@ -292,14 +341,17 @@ export default function TeacherLibrary() {
     return m;
   }, [files]);
 
-  const totalSize = useMemo(() => files.reduce((a, f) => a + (f.file_size || 0), 0), [files]);
+  const classFilterOptions = useMemo(() => [
+    { value: '', label: 'All classes' },
+    ...classYearOptions.map(o => ({ value: String(o.id), label: o.label })),
+  ], [classYearOptions]);
 
   const visible = useMemo(() => {
     const sub = searchSubject.trim().toLowerCase();
     return files.filter(f => {
       if (filterCat && f.category !== filterCat) return false;
-      if (sub && !(f.subject || '').toLowerCase().includes(sub)) return false;
-      if (filterClass && String(f.class_id || '') !== filterClass) return false;
+      if (sub && !(f.subject_name || '').toLowerCase().includes(sub)) return false;
+      if (filterClass && !(f.class_year_ids || []).includes(Number(filterClass))) return false;
       return true;
     });
   }, [files, filterCat, searchSubject, filterClass]);
@@ -327,15 +379,9 @@ export default function TeacherLibrary() {
 
         {/* Stat strip */}
         <Card padding={0}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)' }}>
-            <div style={{ padding: '14px 18px', borderRight: `1px solid ${hf.borderS}` }}>
-              <div style={{ ...hfText.micro, fontSize: 10 }}>Files in library</div>
-              <div style={{ ...hfText.num, fontSize: 22, fontWeight: 700, marginTop: 2 }}>{files.length}</div>
-            </div>
-            <div style={{ padding: '14px 18px' }}>
-              <div style={{ ...hfText.micro, fontSize: 10 }}>Total size</div>
-              <div style={{ ...hfText.num, fontSize: 22, fontWeight: 700, marginTop: 2 }}>{fmtSize(totalSize)}</div>
-            </div>
+          <div style={{ padding: '14px 18px' }}>
+            <div style={{ ...hfText.micro, fontSize: 10 }}>Files in library</div>
+            <div style={{ ...hfText.num, fontSize: 22, fontWeight: 700, marginTop: 2 }}>{files.length}</div>
           </div>
         </Card>
 
@@ -365,7 +411,7 @@ export default function TeacherLibrary() {
             style={{ flex: 1, minWidth: 180, padding: '8px 12px', background: hf.surface, border: `1px solid ${hf.border}`, borderRadius: 9, fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none' }}
           />
           <div style={{ width: 180 }}>
-            <FSelect value={filterClass} onChange={setFilterClass} options={classOptions(classes, 'All classes')} />
+            <FSelect value={filterClass} onChange={setFilterClass} options={classFilterOptions} />
           </div>
         </div>
 
@@ -376,24 +422,27 @@ export default function TeacherLibrary() {
           </Card>
         ) : (
           <Card padding={0} style={{ overflowX: 'auto' }}>
-            <div style={{ display: 'grid', minWidth: 900, gridTemplateColumns: '2.2fr 1fr 1fr 0.8fr 1.2fr 0.8fr 1fr 130px', padding: '11px 16px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`, ...hfText.micro, fontSize: 10 }}>
-              <div>Title</div><div>Category</div><div>Subject</div><div>Class</div><div>Uploaded by</div><div>Size</div><div>Added</div><div></div>
+            <div style={{ display: 'grid', minWidth: 820, gridTemplateColumns: '2.2fr 1fr 1fr 1.4fr 1.2fr 1fr 130px', padding: '11px 16px', background: hf.surface2, borderBottom: `1px solid ${hf.borderS}`, ...hfText.micro, fontSize: 10 }}>
+              <div>Title</div><div>Category</div><div>Subject</div><div>Classes</div><div>Uploaded by</div><div>Added</div><div></div>
             </div>
             {visible.map((f, i) => {
               const mine = f.uploaded_by_id === myId;
               return (
-                <div key={f.id} style={{ display: 'grid', minWidth: 900, gridTemplateColumns: '2.2fr 1fr 1fr 0.8fr 1.2fr 0.8fr 1fr 130px', padding: '10px 16px', alignItems: 'center', borderBottom: i === visible.length - 1 ? 'none' : `1px solid ${hf.borderS}` }}>
+                <div key={f.id} style={{ display: 'grid', minWidth: 820, gridTemplateColumns: '2.2fr 1fr 1fr 1.4fr 1.2fr 1fr 130px', padding: '10px 16px', alignItems: 'center', borderBottom: i === visible.length - 1 ? 'none' : `1px solid ${hf.borderS}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
                     <FileIcon />
                     <span style={{ ...hfText.body, fontWeight: 600, color: hf.ink, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.title}</span>
                   </div>
                   <div><Pill tone={CAT_TONE[f.category] || 'neutral'}>{CAT_LABEL[f.category] || f.category}</Pill></div>
-                  <div style={{ ...hfText.small, color: f.subject ? hf.ink2 : hf.faint }}>{f.subject || '—'}</div>
-                  <div style={{ ...hfText.small, color: f.class_name ? hf.ink2 : hf.faint }}>{f.class_name ? gradeLabel(f.class_name) : 'All'}</div>
+                  <div style={{ ...hfText.small, color: f.subject_name ? hf.ink2 : hf.faint }}>{f.subject_name || '—'}</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {(f.class_labels || []).length > 0
+                      ? f.class_labels.map((l, j) => <Pill key={j} tone="neutral">{l}</Pill>)
+                      : <span style={{ ...hfText.small, color: hf.faint }}>—</span>}
+                  </div>
                   <div style={{ ...hfText.small, color: hf.ink2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {mine ? <span style={{ fontWeight: 600 }}>You</span> : (f.uploaded_by_name || 'Staff')}
                   </div>
-                  <div style={{ ...hfText.small, ...hfText.num, color: hf.muted }}>{fmtSize(f.file_size)}</div>
                   <div style={{ ...hfText.small, ...hfText.num, color: hf.muted }}>{fmtDate(f.created_at)}</div>
                   <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                     <Btn variant="ghost" size="sm" onClick={() => downloadFile(f.id, f.title, setActionErr)}>Download</Btn>
@@ -418,7 +467,7 @@ export default function TeacherLibrary() {
       {body}
 
       {uploading && (
-        <UploadModal currentAY={currentAY} classes={classes} onClose={() => setUploading(false)} onSaved={() => { setUploading(false); loadAll(); }} />
+        <UploadModal classYearOptions={classYearOptions} subjects={subjects} onClose={() => setUploading(false)} onSaved={() => { setUploading(false); loadAll(); }} />
       )}
       {deleting && (
         <ConfirmDelete file={deleting} busy={delBusy} error={delErr} onCancel={() => setDeleting(null)} onConfirm={doDelete} />

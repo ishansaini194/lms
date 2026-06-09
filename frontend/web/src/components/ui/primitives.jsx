@@ -220,13 +220,14 @@ const fieldInputBase = {
   fontSize: 13, color: hf.ink, fontFamily: hfFonts.ui, outline: 'none',
 };
 
-export const FInput = ({ value, onChange, placeholder, type = 'text', disabled = false }) => (
+export const FInput = ({ value, onChange, placeholder, type = 'text', disabled = false, onKeyDown }) => (
   <input
     type={type}
     value={value ?? ''}
     placeholder={placeholder}
     disabled={disabled}
     onChange={(e) => onChange?.(e.target.value)}
+    onKeyDown={onKeyDown}
     style={disabled ? { ...fieldInputBase, background: hf.surface2, color: hf.muted, cursor: 'not-allowed' } : fieldInputBase}
   />
 );
