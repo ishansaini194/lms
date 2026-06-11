@@ -6,7 +6,7 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
-  ModalShell, StateFrame, SearchInput, FilterSelect,
+  ModalShell, StateFrame, SearchInput, FilterSelect, FInput, FSelect,
 } from '@/components/ui/primitives';
 import {
   AdminChrome, AdminTopBar, Tabs, Segmented,
@@ -1079,12 +1079,171 @@ const GenerateStudentFeesModal = ({ studentId, studentName, onClose, onGenerated
   );
 };
 
+// Add a single ad-hoc fee with a custom amount for one student. Unlike
+// "Generate fees" (which pulls fixed amounts from the class's standard fee),
+// this lets the admin set any fee type, month, amount and discount by hand.
+// Posts to POST /api/fees, which dedupes on (enrollment, fee_type, month).
+const FEE_TYPE_OPTIONS = [
+  { value: 'tuition',   label: 'Tuition' },
+  { value: 'transport', label: 'Transport' },
+  { value: 'admission', label: 'Admission' },
+  { value: 'exam',      label: 'Exam' },
+  { value: 'books',     label: 'Books' },
+  { value: 'uniform',   label: 'Uniform' },
+  { value: 'late_fee',  label: 'Late fee' },
+];
+
+const CustomFeeModal = ({ studentId, studentName, onClose, onAdded }) => {
+  const [enrollment, setEnrollment] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [done, setDone] = useState(false);
+
+  const [feeType, setFeeType] = useState('tuition');
+  const [month, setMonth] = useState('');
+  const [amount, setAmount] = useState('');
+  const [discount, setDiscount] = useState('');
+  const [reason, setReason] = useState('');
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true); setLoadErr('');
+    apiFetch(`/api/enrollments?student_id=${studentId}&status=active&limit=1`)
+      .then((enrRes) => { if (!cancelled) setEnrollment((enrRes.data || [])[0] || null); })
+      .catch((e) => { if (!cancelled) setLoadErr(e.message); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [studentId]);
+
+  const ay = enrollment?.class_year?.academic_year;
+  const startMonth = ay?.start_date ? new Date(ay.start_date).getMonth() + 1 : 4;
+  const orderedMonths = Array.from({ length: 12 }, (_, i) => ((startMonth - 1 + i) % 12) + 1);
+  const cls = enrollment?.class_year?.class;
+  const classLabel = cls ? `${cls.name}-${cls.section}` : '—';
+
+  const amt = parseFloat(amount);
+  const disc = discount.trim() === '' ? 0 : parseFloat(discount);
+  const valid = enrollment && month !== '' && !Number.isNaN(amt) && amt >= 0
+    && !Number.isNaN(disc) && disc >= 0 && disc <= amt;
+
+  const handleAdd = async () => {
+    if (!valid || busy) return;
+    setErr(''); setBusy(true);
+    try {
+      await apiFetch('/api/fees', {
+        method: 'POST',
+        body: {
+          enrollment_id: enrollment.id,
+          fee_type: feeType,
+          month: Number(month),
+          amount: String(amount),
+          discount: discount.trim() === '' ? '0' : String(discount),
+          discount_reason: reason.trim() || undefined,
+        },
+      });
+      setDone(true);
+      onAdded?.();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const noEnrollment = !loading && !loadErr && !enrollment;
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
+      <div onClick={busy ? undefined : onClose} style={{ position: 'absolute', inset: 0 }}>
+        <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+          <ModalShell
+            title="Add custom fee"
+            subtitle={enrollment ? `${studentName} · Class ${classLabel}${ay?.year_label ? ` · ${ay.year_label}` : ''}` : studentName}
+            width={500}
+            footer={<>
+              <Btn variant="ghost" size="md" onClick={onClose} disabled={busy}>Close</Btn>
+              {!done && (
+                <Btn variant="primary" size="md" onClick={handleAdd} disabled={busy || !valid}>
+                  {busy ? 'Adding…' : 'Add fee'}
+                </Btn>
+              )}
+            </>}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {loading && <div style={{ ...hfText.small, color: hf.muted }}>Loading enrollment…</div>}
+              {loadErr && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>Couldn't load: {loadErr}</div>
+              )}
+              {noEnrollment && (
+                <div style={{ ...hfText.small, color: hf.muted, background: hf.surface2, border: `1px solid ${hf.borderS}`, borderRadius: 9, padding: '9px 12px' }}>Enroll this student in a class first — fees attach to an active enrollment.</div>
+              )}
+
+              {enrollment && !done && (<>
+                <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5 }}>
+                  Set any amount by hand. A fee of the same type and month can only exist once per student.
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <FieldLabel required>Fee type</FieldLabel>
+                    <FSelect value={feeType} onChange={setFeeType} options={FEE_TYPE_OPTIONS} disabled={busy} />
+                  </div>
+                  <div>
+                    <FieldLabel required>Month</FieldLabel>
+                    <FSelect
+                      value={month}
+                      onChange={setMonth}
+                      disabled={busy}
+                      options={[{ value: '', label: 'Select…' }, ...orderedMonths.map((m) => ({ value: String(m), label: monthName(m) }))]}
+                    />
+                  </div>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <FieldLabel required>Amount (₹)</FieldLabel>
+                    <FInput type="number" value={amount} onChange={setAmount} placeholder="e.g. 500" disabled={busy} />
+                  </div>
+                  <div>
+                    <FieldLabel hint="optional">Discount (₹)</FieldLabel>
+                    <FInput type="number" value={discount} onChange={setDiscount} placeholder="0" disabled={busy} />
+                  </div>
+                </div>
+                {discount.trim() !== '' && (
+                  <div>
+                    <FieldLabel hint="optional">Discount reason</FieldLabel>
+                    <FInput value={reason} onChange={setReason} placeholder="e.g. Sibling concession" disabled={busy} />
+                  </div>
+                )}
+                {!Number.isNaN(amt) && !Number.isNaN(disc) && disc > amt && (
+                  <div style={{ ...hfText.small, color: hf.accent }}>Discount can't exceed the amount.</div>
+                )}
+              </>)}
+
+              {err && (
+                <div style={{ ...hfText.small, color: hf.accent, background: hf.accentSoft, border: `1px solid ${hf.accentEdge}`, borderRadius: 9, padding: '9px 12px' }}>{err}</div>
+              )}
+              {done && (
+                <div style={{ padding: '12px 14px', borderRadius: 10, background: hf.surface2, border: `1px solid ${hf.borderS}` }}>
+                  <div style={{ ...hfText.small, fontWeight: 700, marginBottom: 4, color: hf.good }}>Fee added</div>
+                  <div style={{ ...hfText.small, color: hf.ink2 }}>{cap(feeType)} · {monthName(Number(month))} · ₹{amount}</div>
+                </div>
+              )}
+            </div>
+          </ModalShell>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ─── A3 · Student detail ──────────────────────────────────────────────────
 const HA3Detail = () => {
   const { id } = useParams();              // student id from the URL
   const navigate = useNavigate();
   const [showEdit, setShowEdit] = useState(false);
   const [showGenFees, setShowGenFees] = useState(false);
+  const [showCustomFee, setShowCustomFee] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showDelete, setShowDelete] = useState(false);
   const [delBusy, setDelBusy] = useState(false);
@@ -1153,6 +1312,7 @@ const HA3Detail = () => {
           <Btn variant="outline" size="sm" icon={I.arrUp} disabled title="Coming soon">Promote</Btn>
           <Btn variant="outline" size="sm" style={{ color: hf.accent, borderColor: hf.accentEdge }} onClick={() => { setDelErr(''); setShowDelete(true); }}>Delete</Btn>
           <Btn variant="outline" size="sm" icon={I.card} onClick={() => setShowGenFees(true)}>Generate fees</Btn>
+          <Btn variant="outline" size="sm" icon={I.card} onClick={() => setShowCustomFee(true)}>Custom fee</Btn>
           <Btn variant="primary" size="sm" icon={I.card} onClick={() => navigate(`/admin/fees?tab=collect&student_id=${s.id}`)}>Collect fees</Btn>
         </>}
       >
@@ -1224,32 +1384,6 @@ const HA3Detail = () => {
           {/* RIGHT: fee history */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <StudentFeeLedger studentId={s.id} reloadToken={feeReload} />
-
-            <Card>
-              <SectionHead title="Activity" subtitle="Last 30 days" />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {[
-                  { icon: I.receipt, who: 'Mr. Singh (admin)', what: 'recorded payment ₹1,200 · Mar tuition', when: '5 Mar 10:14' },
-                  { icon: I.chart, who: 'Mrs. Kaur', what: 'published Mid-term results', when: '22 Apr 14:42' },
-                  { icon: I.book, who: 'Mrs. Arora', what: 'added homework · EVS · Mon 28 Apr', when: '23 Apr 09:10' },
-                  { icon: I.bell, who: 'Principal', what: 'posted school-wide notice', when: '25 Apr 11:42' },
-                ].map((a, i) => (
-                  <div key={i} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                    <div style={{
-                      width: 28, height: 28, borderRadius: 7, flexShrink: 0,
-                      background: hf.surface2, border: `1px solid ${hf.borderS}`,
-                      color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    }}>{a.icon}</div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.4 }}>
-                        <b>{a.who}</b> {a.what}
-                      </div>
-                      <div style={{ fontSize: 11, color: hf.muted, marginTop: 2 }}>{a.when}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Card>
           </div>
         </div>
       </AdminChrome>
@@ -1264,6 +1398,14 @@ const HA3Detail = () => {
           studentName={s.name}
           onClose={() => setShowGenFees(false)}
           onGenerated={() => setFeeReload((n) => n + 1)}
+        />
+      )}
+      {showCustomFee && (
+        <CustomFeeModal
+          studentId={s.id}
+          studentName={s.name}
+          onClose={() => setShowCustomFee(false)}
+          onAdded={() => setFeeReload((n) => n + 1)}
         />
       )}
       {showExport && (

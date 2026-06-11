@@ -7,6 +7,8 @@ import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money, feeLabel } from '@/lib/studentFees';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { EnableNotifications } from '@/components/EnableNotifications';
+import { printStudentForm, TEACHER_EXPORT_FIELDS } from '@/components/StudentExport.jsx';
+import { useAuth } from '@/auth/AuthContext';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -117,11 +119,13 @@ const PageError = ({ message, onRetry }) => (
 
 export default function StudentProfile() {
   const isMobile = useIsMobile();
+  const { school } = useAuth();
   const [profile, setProfile] = useState(null);
   const [enrollments, setEnrollments] = useState([]);
   const [feeData, setFeeData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [printing, setPrinting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -149,6 +153,20 @@ export default function StudentProfile() {
   const klass = classLabel(cy);
   const yearLabel = cy?.academic_year?.year_label || '';
 
+  // Print the student's own details as a black-and-white form PDF. Reuses the
+  // admin form generator; class_label is injected since /api/me/profile doesn't
+  // carry it, and fee status is excluded (TEACHER_EXPORT_FIELDS).
+  const handlePrint = useCallback(async () => {
+    if (printing || !profile) return;
+    setPrinting(true);
+    try {
+      const row = { ...profile, class_label: klass };
+      await printStudentForm(row, school, TEACHER_EXPORT_FIELDS);
+    } finally {
+      setPrinting(false);
+    }
+  }, [printing, profile, klass, school]);
+
   let body;
   if (loading) {
     body = <PageLoading />;
@@ -173,6 +191,9 @@ export default function StudentProfile() {
               </div>
             </div>
             <div style={{ flex: 1 }} />
+            <Btn variant="outline" size="sm" icon={I.download} onClick={handlePrint} disabled={printing}>
+              {printing ? 'Printing…' : 'Print'}
+            </Btn>
             <Pill tone={p.is_active ? 'good' : 'neutral'} dot>{p.is_active ? 'Active' : 'Inactive'}</Pill>
           </div>
         </Card>

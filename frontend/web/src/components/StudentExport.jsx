@@ -118,6 +118,80 @@ async function exportPDF(filename, title, subtitle, rows, fields) {
   return deliverFile(filename.endsWith('.pdf') ? filename : `${filename}.pdf`, blob, title);
 }
 
+// Single-student PDF as a vertical, black-and-white form (one label/value per
+// row) rather than a wide table. Used by the profile export so a printed page
+// reads like a registration sheet. No colours, no fills — plain B&W.
+async function exportStudentFormPDF(filename, title, subtitle, student, fields) {
+  const { jsPDF } = await import('jspdf');
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const margin = 48;
+  const labelW = 150;              // left column for field labels
+  const valueX = margin + labelW;
+  const valueW = pageW - margin - valueX;
+  let y = margin;
+
+  doc.setTextColor(0);
+
+  // Empty photo box, top-right — for a passport photo to be pasted/printed.
+  const photoW = 96, photoH = 120;
+  const photoX = pageW - margin - photoW;
+  const photoY = margin;
+  doc.setDrawColor(0);
+  doc.setLineWidth(1);
+  doc.rect(photoX, photoY, photoW, photoH);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  doc.text('Photo', photoX + photoW / 2, photoY + photoH / 2, { align: 'center' });
+  doc.setTextColor(0);
+
+  // Header (kept left of the photo box).
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.text(title, margin, y + 4);
+  y += 22;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(10);
+  doc.text(subtitle, margin, y);
+  y += 16;
+  doc.setDrawColor(0);
+  doc.setLineWidth(1);
+  doc.line(margin, y, photoX - 16, y);
+  // Field rows start below the photo box so they don't run under it.
+  y = Math.max(y + 18, photoY + photoH + 18);
+
+  // One row per field: bold label, wrapped value, thin separator.
+  for (const f of fields) {
+    const raw = f.get(student);
+    const value = raw == null || raw === '' ? '—' : String(raw);
+    const valueLines = doc.splitTextToSize(value, valueW);
+    const rowH = Math.max(20, valueLines.length * 13 + 7);
+
+    // Page break before drawing a row that wouldn't fit.
+    if (y + rowH > pageH - margin) {
+      doc.addPage();
+      y = margin;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(10);
+    doc.text(f.label, margin, y + 11);
+    doc.setFont('helvetica', 'normal');
+    doc.text(valueLines, valueX, y + 11);
+
+    y += rowH;
+    doc.setDrawColor(210);
+    doc.setLineWidth(0.5);
+    doc.line(margin, y, pageW - margin, y);
+    y += 8;
+  }
+
+  const blob = doc.output('blob');
+  return deliverFile(filename.endsWith('.pdf') ? filename : `${filename}.pdf`, blob, title);
+}
+
 // Pull every active (and optionally inactive) student for a class-year, across
 // pages (list endpoint caps at limit=100).
 async function fetchClassStudents(classYearId, includeInactive) {
@@ -162,7 +236,7 @@ const CheckRow = ({ checked, onChange, label }) => (
 
 const FormatPicker = ({ format, setFormat }) => (
   <div style={{ display: 'flex', gap: 16 }}>
-    {[{ k: 'csv', l: 'CSV (.csv)' }, { k: 'pdf', l: 'PDF (.pdf)' }].map((o) => (
+    {[{ k: 'pdf', l: 'PDF (.pdf)' }, { k: 'csv', l: 'CSV (.csv)' }].map((o) => (
       <label key={o.k} style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', ...hfText.small, color: hf.ink2 }}>
         <input type="radio" name="export-format" checked={format === o.k} onChange={() => setFormat(o.k)} style={{ width: 15, height: 15, accentColor: hf.primary, cursor: 'pointer' }} />
         {o.l}
@@ -212,7 +286,7 @@ export function ExportStudentsModal({
 
   const [picked, setPicked] = useState(() => new Set(classes.map((c) => String(c.value))));
   const [includeInactive, setIncludeInactive] = useState(false);
-  const [format, setFormat] = useState('csv');
+  const [format, setFormat] = useState('pdf');
   const { keys, toggle, setAll, selectedFields, allKeys } = useFieldSelection(fields);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
@@ -319,12 +393,22 @@ export function ExportStudentsModal({
   );
 }
 
+// One-click print: the black-and-white student form PDF with ALL fields, no
+// modal. Used by the profile "Print" button. `school` comes from useAuth().
+export async function printStudentForm(student, school, fields = STUDENT_EXPORT_FIELDS) {
+  const stamp = new Date().toISOString().slice(0, 10);
+  const safeName = (student?.name || 'student').replace(/[^\w-]+/g, '_');
+  const title = `${student?.name || 'Student'}${student?.admission_no ? ` · ${student.admission_no}` : ''}`;
+  const subtitle = `${school?.name || 'School'}`;
+  return exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, fields);
+}
+
 // ── Single-student export (profile) ───────────────────────────────────────────
 // Deliberately plain/classic: a field checklist + format + Export. No frills.
 export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_FIELDS }) {
   const { school } = useAuth();
   const { keys, toggle, setAll, selectedFields, allKeys } = useFieldSelection(fields);
-  const [format, setFormat] = useState('csv');
+  const [format, setFormat] = useState('pdf');
   const [err, setErr] = useState('');
 
   const [busy, setBusy] = useState(false);
@@ -337,10 +421,10 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
       const stamp = new Date().toISOString().slice(0, 10);
       const safeName = (student.name || 'student').replace(/[^\w-]+/g, '_');
       const title = `${student.name || 'Student'}${student.admission_no ? ` · ${student.admission_no}` : ''}`;
-      const subtitle = `${school?.name || 'School'} · Generated ${new Date().toLocaleString()}`;
+      const subtitle = `${school?.name || 'School'}`;
       const ok = format === 'csv'
         ? await exportCSV(`${safeName}_${stamp}`, [student], selectedFields, title)
-        : await exportPDF(`${safeName}_${stamp}`, title, subtitle, [student], selectedFields);
+        : await exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields);
       if (ok) onClose?.();
     } catch (e) {
       setErr(e.message || 'Export failed.');
