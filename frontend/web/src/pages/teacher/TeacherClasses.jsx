@@ -694,6 +694,7 @@ export default function TeacherClasses() {
       {exportingRoster && (
         <ExportStudentsModal
           classOptions={exportClassOptions}
+          initialClassIds={selected != null ? [selected] : null}
           fetchStudents={fetchTeacherStudents}
           fields={TEACHER_EXPORT_FIELDS}
           showInactiveToggle={false}

@@ -275,16 +275,28 @@ const FieldChecklist = ({ fields, keys, toggle, columns = 2 }) => (
 //     admin /api/students fetcher; the teacher portal passes an enrollment-based one.
 //   fields — catalogue to offer (admin = full set; teacher = no fee status).
 //   showInactiveToggle — admin can include soft-deleted students; teachers can't.
+//   initialClassIds — pre-select only these class-years (e.g. the class the user
+//     opened the export from). Omit/empty → defaults to every class selected.
 export function ExportStudentsModal({
   classOptions = [], onClose,
   fetchStudents = fetchClassStudents,
   fields = STUDENT_EXPORT_FIELDS,
   showInactiveToggle = true,
+  initialClassIds = null,
 }) {
   const { school } = useAuth();
   const classes = classOptions.filter((o) => o.value !== '' && o.value != null);
 
-  const [picked, setPicked] = useState(() => new Set(classes.map((c) => String(c.value))));
+  const [picked, setPicked] = useState(() => {
+    const valid = new Set(classes.map((c) => String(c.value)));
+    // Pre-select the opened class(es) when given (filtered to ones we actually
+    // have); otherwise fall back to selecting every class.
+    if (Array.isArray(initialClassIds) && initialClassIds.length > 0) {
+      const wanted = initialClassIds.map(String).filter((id) => valid.has(id));
+      if (wanted.length > 0) return new Set(wanted);
+    }
+    return valid;
+  });
   const [includeInactive, setIncludeInactive] = useState(false);
   const [format, setFormat] = useState('pdf');
   const { keys, toggle, setAll, selectedFields, allKeys } = useFieldSelection(fields);

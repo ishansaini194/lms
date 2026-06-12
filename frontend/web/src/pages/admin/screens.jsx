@@ -746,7 +746,7 @@ const HA3 = () => {
         </Card>
       </AdminChrome>
       {showExport && (
-        <ExportStudentsModal classOptions={classOptions} onClose={() => setShowExport(false)} />
+        <ExportStudentsModal classOptions={classOptions} initialClassIds={classFilter ? [classFilter] : null} onClose={() => setShowExport(false)} />
       )}
       {showAdd && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 50 }}>
