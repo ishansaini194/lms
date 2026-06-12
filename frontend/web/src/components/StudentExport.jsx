@@ -80,6 +80,31 @@ async function deliverFile(filename, blob, title) {
   return true;
 }
 
+// Open a freshly-generated PDF in a new browser tab for preview — Chrome's (and
+// mobile's) built-in PDF viewer, which already offers print, download and
+// "save to Drive". This replaces the silent download for PDFs.
+//   `tab` is a window opened *synchronously* on the originating click (see the
+//   callers): popup blockers kill a window.open() that happens after an await,
+//   so we open a blank tab up front and only set its URL here. If no tab was
+//   pre-opened (or it was blocked), we fall back to a normal download.
+function previewPdf(blob, tab) {
+  const url = URL.createObjectURL(blob);
+  if (tab && !tab.closed) {
+    tab.location = url;
+  } else {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+  // Revoke late so the viewer (and a manual reload) still has the blob to read.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  return true;
+}
+
 // ── generators ────────────────────────────────────────────────────────────────
 function csvCell(v) {
   const s = v == null ? '' : String(v);
@@ -95,7 +120,7 @@ async function exportCSV(filename, rows, fields, title) {
 
 // Real PDF (jsPDF + autotable) → a proper file that saves/shares on every device,
 // unlike the old print-dialog approach which mobile browsers don't support.
-async function exportPDF(filename, title, subtitle, rows, fields) {
+async function exportPDF(filename, title, subtitle, rows, fields, previewTab) {
   const { jsPDF } = await import('jspdf');
   const { default: autoTable } = await import('jspdf-autotable');
   const landscape = fields.length > 5;
@@ -115,13 +140,13 @@ async function exportPDF(filename, title, subtitle, rows, fields) {
     margin: { left: 40, right: 40 },
   });
   const blob = doc.output('blob');
-  return deliverFile(filename.endsWith('.pdf') ? filename : `${filename}.pdf`, blob, title);
+  return previewPdf(blob, previewTab);
 }
 
 // Single-student PDF as a vertical, black-and-white form (one label/value per
 // row) rather than a wide table. Used by the profile export so a printed page
 // reads like a registration sheet. No colours, no fills — plain B&W.
-async function exportStudentFormPDF(filename, title, subtitle, student, fields) {
+async function exportStudentFormPDF(filename, title, subtitle, student, fields, previewTab) {
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
@@ -189,7 +214,7 @@ async function exportStudentFormPDF(filename, title, subtitle, student, fields) 
   }
 
   const blob = doc.output('blob');
-  return deliverFile(filename.endsWith('.pdf') ? filename : `${filename}.pdf`, blob, title);
+  return previewPdf(blob, previewTab);
 }
 
 // Pull every active (and optionally inactive) student for a class-year, across
@@ -315,6 +340,9 @@ export function ExportStudentsModal({
     setErr('');
     if (picked.size === 0) { setErr('Pick at least one class.'); return; }
     if (selectedFields.length === 0) { setErr('Pick at least one field to export.'); return; }
+    // PDFs preview in a new tab — open it now, within the click gesture, so popup
+    // blockers don't kill it after the awaits below. CSV still downloads.
+    const previewTab = format === 'pdf' ? window.open('', '_blank') : null;
     setBusy(true);
     try {
       const ids = Array.from(picked);
@@ -330,16 +358,17 @@ export function ExportStudentsModal({
         }
       }
       rows.sort((a, b) => (a.class_label || '').localeCompare(b.class_label || '') || (a.name || '').localeCompare(b.name || ''));
-      if (rows.length === 0) { setErr('No students found for the selected classes.'); setBusy(false); return; }
+      if (rows.length === 0) { previewTab?.close(); setErr('No students found for the selected classes.'); setBusy(false); return; }
 
       const stamp = new Date().toISOString().slice(0, 10);
       const title = `${school?.name || 'School'} — Students`;
       const subtitle = `${rows.length} student(s) · Generated ${new Date().toLocaleString()}`;
       const ok = format === 'csv'
         ? await exportCSV(`students_${stamp}`, rows, selectedFields, title)
-        : await exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields);
+        : await exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields, previewTab);
       if (ok) onClose?.();
     } catch (e) {
+      previewTab?.close();
       setErr(e.message || 'Export failed.');
     } finally {
       setBusy(false);
@@ -407,12 +436,15 @@ export function ExportStudentsModal({
 
 // One-click print: the black-and-white student form PDF with ALL fields, no
 // modal. Used by the profile "Print" button. `school` comes from useAuth().
-export async function printStudentForm(student, school, fields = STUDENT_EXPORT_FIELDS) {
+// `previewTab` should be a window the caller opened synchronously on click (so
+// the popup blocker allows it); omit it and we open one here as a best effort.
+export async function printStudentForm(student, school, fields = STUDENT_EXPORT_FIELDS, previewTab = null) {
+  const tab = previewTab || window.open('', '_blank');
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = (student?.name || 'student').replace(/[^\w-]+/g, '_');
   const title = `${student?.name || 'Student'}${student?.admission_no ? ` · ${student.admission_no}` : ''}`;
   const subtitle = `${school?.name || 'School'}`;
-  return exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, fields);
+  return exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, fields, tab);
 }
 
 // ── Single-student export (profile) ───────────────────────────────────────────
@@ -428,6 +460,8 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
   const run = async () => {
     setErr('');
     if (selectedFields.length === 0) { setErr('Pick at least one field to export.'); return; }
+    // Open the PDF preview tab within the click gesture (see previewPdf). CSV downloads.
+    const previewTab = format === 'pdf' ? window.open('', '_blank') : null;
     setBusy(true);
     try {
       const stamp = new Date().toISOString().slice(0, 10);
@@ -436,9 +470,10 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
       const subtitle = `${school?.name || 'School'}`;
       const ok = format === 'csv'
         ? await exportCSV(`${safeName}_${stamp}`, [student], selectedFields, title)
-        : await exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields);
+        : await exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields, previewTab);
       if (ok) onClose?.();
     } catch (e) {
+      previewTab?.close();
       setErr(e.message || 'Export failed.');
     } finally {
       setBusy(false);

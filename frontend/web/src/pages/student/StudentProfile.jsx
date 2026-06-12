@@ -158,10 +158,15 @@ export default function StudentProfile() {
   // carry it, and fee status is excluded (TEACHER_EXPORT_FIELDS).
   const handlePrint = useCallback(async () => {
     if (printing || !profile) return;
+    // Open the preview tab now, within the click gesture, so the popup blocker
+    // allows it (the PDF is generated asynchronously inside printStudentForm).
+    const previewTab = window.open('', '_blank');
     setPrinting(true);
     try {
       const row = { ...profile, class_label: klass };
-      await printStudentForm(row, school, TEACHER_EXPORT_FIELDS);
+      await printStudentForm(row, school, TEACHER_EXPORT_FIELDS, previewTab);
+    } catch (e) {
+      previewTab?.close();
     } finally {
       setPrinting(false);
     }
