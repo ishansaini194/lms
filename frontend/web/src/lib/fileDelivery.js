@@ -1,22 +1,31 @@
-// Cross-device file save/share. Phones can't reliably take an <a download> blob
-// (iOS Safari opens it as a page instead of saving), so we prefer the Web Share
-// API (Level 2, with files) which opens the native sheet (Save to Files, share
-// to WhatsApp/Drive, etc.). Desktop browsers fall back to a normal download.
-// Returns true on success, false if the user cancelled the share sheet.
+// iOS (incl. iPadOS, which masquerades as a Mac) can't save an <a download> blob
+// — Safari opens it as a page instead — so there we must use the native share
+// sheet. Everywhere else we want a direct, one-tap save.
+function isIOS() {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+}
+
+// Save a file to the device. On Android/desktop this is a plain download — it
+// drops straight into Downloads with no chooser, which is what non-technical
+// users expect from "Save". Only on iOS (where direct download doesn't work) do
+// we fall back to the Web Share sheet (Save to Files / share to Drive, etc.).
+// Returns true on success, false if an iOS share was cancelled.
 export async function deliverFile(filename, blob, title) {
-  const file = new File([blob], filename, { type: blob.type });
-  // Mobile: native share/save sheet. Guarded by canShare({files}) so we only try
-  // it where file sharing is actually supported (and the context is secure).
-  if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title });
-      return true;
-    } catch (e) {
-      if (e && e.name === 'AbortError') return false; // user dismissed the sheet
-      // Anything else (e.g. share not allowed) → fall through to download.
+  if (isIOS()) {
+    const file = new File([blob], filename, { type: blob.type });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title });
+        return true;
+      } catch (e) {
+        if (e && e.name === 'AbortError') return false; // user dismissed the sheet
+        // Anything else → fall through to a download attempt.
+      }
     }
   }
-  // Desktop / unsupported: classic anchor download.
+  // Android / desktop / PWA: direct download, no share chooser.
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
