@@ -7,7 +7,8 @@ import { apiFetch } from '@/lib/api';
 import { loadFeesWithBalances, money, feeLabel } from '@/lib/studentFees';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { EnableNotifications } from '@/components/EnableNotifications';
-import { printStudentForm, TEACHER_EXPORT_FIELDS } from '@/components/StudentExport.jsx';
+import { buildStudentFormPdf, TEACHER_EXPORT_FIELDS } from '@/components/StudentExport.jsx';
+import { PdfPreviewModal } from '@/components/PdfPreview.jsx';
 import { useAuth } from '@/auth/AuthContext';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
@@ -126,6 +127,7 @@ export default function StudentProfile() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [printing, setPrinting] = useState(false);
+  const [preview, setPreview] = useState(null); // { blob, filename, title } | null
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -153,20 +155,16 @@ export default function StudentProfile() {
   const klass = classLabel(cy);
   const yearLabel = cy?.academic_year?.year_label || '';
 
-  // Print the student's own details as a black-and-white form PDF. Reuses the
-  // admin form generator; class_label is injected since /api/me/profile doesn't
-  // carry it, and fee status is excluded (TEACHER_EXPORT_FIELDS).
+  // Build the student's own details as a black-and-white form PDF and open it in
+  // the in-app preview (Save/Print from there). Reuses the admin form generator;
+  // class_label is injected since /api/me/profile doesn't carry it, and fee
+  // status is excluded (TEACHER_EXPORT_FIELDS).
   const handlePrint = useCallback(async () => {
     if (printing || !profile) return;
-    // Open the preview tab now, within the click gesture, so the popup blocker
-    // allows it (the PDF is generated asynchronously inside printStudentForm).
-    const previewTab = window.open('', '_blank');
     setPrinting(true);
     try {
       const row = { ...profile, class_label: klass };
-      await printStudentForm(row, school, TEACHER_EXPORT_FIELDS, previewTab);
-    } catch (e) {
-      previewTab?.close();
+      setPreview(await buildStudentFormPdf(row, school, TEACHER_EXPORT_FIELDS));
     } finally {
       setPrinting(false);
     }
@@ -305,6 +303,7 @@ export default function StudentProfile() {
   return (
     <StudentChrome active="Profile" title="Profile" breadcrumb="Home">
       {body}
+      {preview && <PdfPreviewModal {...preview} onClose={() => setPreview(null)} />}
     </StudentChrome>
   );
 }

@@ -9,6 +9,8 @@ import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Btn, ModalShell } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/auth/AuthContext';
+import { deliverFile } from '@/lib/fileDelivery';
+import { PdfPreviewModal } from '@/components/PdfPreview.jsx';
 
 // ── field catalogue (label + how to read it off an enriched student row) ──────
 function fmtDate(iso) {
@@ -48,62 +50,9 @@ export const TEACHER_EXPORT_FIELDS = STUDENT_EXPORT_FIELDS.filter((f) => f.key !
 // Sensible defaults so the form opens "ready to export".
 const DEFAULT_KEYS = ['name', 'admission_no', 'class_label', 'gender', 'dob', 'phone', 'father_name', 'father_contact'];
 
-// ── file delivery (cross-device) ───────────────────────────────────────────────
-// Phones can't reliably take an <a download> blob (iOS Safari opens it as a page
-// instead of saving). The Web Share API (Level 2, with files) is the native way
-// to save/share a file on mobile — it opens the system sheet (Save to Files,
-// share to WhatsApp/Drive, etc.). Desktop browsers fall back to a normal download.
-// Returns true on success, false if the user cancelled the share sheet.
-async function deliverFile(filename, blob, title) {
-  const file = new File([blob], filename, { type: blob.type });
-  // Mobile: native share/save sheet. Guarded by canShare({files}) so we only try
-  // it where file sharing is actually supported (and the context is secure).
-  if (typeof navigator !== 'undefined' && navigator.canShare && navigator.canShare({ files: [file] })) {
-    try {
-      await navigator.share({ files: [file], title });
-      return true;
-    } catch (e) {
-      if (e && e.name === 'AbortError') return false; // user dismissed the sheet
-      // Anything else (e.g. share not allowed) → fall through to download.
-    }
-  }
-  // Desktop / unsupported: classic anchor download.
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 4000);
-  return true;
-}
-
-// Open a freshly-generated PDF in a new browser tab for preview — Chrome's (and
-// mobile's) built-in PDF viewer, which already offers print, download and
-// "save to Drive". This replaces the silent download for PDFs.
-//   `tab` is a window opened *synchronously* on the originating click (see the
-//   callers): popup blockers kill a window.open() that happens after an await,
-//   so we open a blank tab up front and only set its URL here. If no tab was
-//   pre-opened (or it was blocked), we fall back to a normal download.
-function previewPdf(blob, tab) {
-  const url = URL.createObjectURL(blob);
-  if (tab && !tab.closed) {
-    tab.location = url;
-  } else {
-    const a = document.createElement('a');
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-  }
-  // Revoke late so the viewer (and a manual reload) still has the blob to read.
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
-  return true;
-}
+// File delivery (Web Share on mobile, download on desktop) lives in
+// '@/lib/fileDelivery'. PDFs are previewed in-app first via <PdfPreviewModal>;
+// the generators below just return the blob + metadata for that modal to show.
 
 // ── generators ────────────────────────────────────────────────────────────────
 function csvCell(v) {
@@ -118,9 +67,9 @@ async function exportCSV(filename, rows, fields, title) {
   return deliverFile(filename.endsWith('.csv') ? filename : `${filename}.csv`, blob, title);
 }
 
-// Real PDF (jsPDF + autotable) → a proper file that saves/shares on every device,
-// unlike the old print-dialog approach which mobile browsers don't support.
-async function exportPDF(filename, title, subtitle, rows, fields, previewTab) {
+// Real PDF (jsPDF + autotable). Returns { blob, filename, title } for the
+// in-app preview modal to render; saving/sharing happens from there.
+async function exportPDF(filename, title, subtitle, rows, fields) {
   const { jsPDF } = await import('jspdf');
   const { default: autoTable } = await import('jspdf-autotable');
   const landscape = fields.length > 5;
@@ -140,13 +89,13 @@ async function exportPDF(filename, title, subtitle, rows, fields, previewTab) {
     margin: { left: 40, right: 40 },
   });
   const blob = doc.output('blob');
-  return previewPdf(blob, previewTab);
+  return { blob, filename: filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title };
 }
 
 // Single-student PDF as a vertical, black-and-white form (one label/value per
 // row) rather than a wide table. Used by the profile export so a printed page
 // reads like a registration sheet. No colours, no fills — plain B&W.
-async function exportStudentFormPDF(filename, title, subtitle, student, fields, previewTab) {
+async function exportStudentFormPDF(filename, title, subtitle, student, fields) {
   const { jsPDF } = await import('jspdf');
   const doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'a4' });
   const pageW = doc.internal.pageSize.getWidth();
@@ -214,7 +163,7 @@ async function exportStudentFormPDF(filename, title, subtitle, student, fields, 
   }
 
   const blob = doc.output('blob');
-  return previewPdf(blob, previewTab);
+  return { blob, filename: filename.endsWith('.pdf') ? filename : `${filename}.pdf`, title };
 }
 
 // Pull every active (and optionally inactive) student for a class-year, across
@@ -327,6 +276,7 @@ export function ExportStudentsModal({
   const { keys, toggle, setAll, selectedFields, allKeys } = useFieldSelection(fields);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
+  const [preview, setPreview] = useState(null); // { blob, filename, title } | null (PDF preview)
 
   const allPicked = picked.size === classes.length && classes.length > 0;
   const toggleClass = (val, on) => setPicked((prev) => {
@@ -340,9 +290,6 @@ export function ExportStudentsModal({
     setErr('');
     if (picked.size === 0) { setErr('Pick at least one class.'); return; }
     if (selectedFields.length === 0) { setErr('Pick at least one field to export.'); return; }
-    // PDFs preview in a new tab — open it now, within the click gesture, so popup
-    // blockers don't kill it after the awaits below. CSV still downloads.
-    const previewTab = format === 'pdf' ? window.open('', '_blank') : null;
     setBusy(true);
     try {
       const ids = Array.from(picked);
@@ -358,22 +305,31 @@ export function ExportStudentsModal({
         }
       }
       rows.sort((a, b) => (a.class_label || '').localeCompare(b.class_label || '') || (a.name || '').localeCompare(b.name || ''));
-      if (rows.length === 0) { previewTab?.close(); setErr('No students found for the selected classes.'); setBusy(false); return; }
+      if (rows.length === 0) { setErr('No students found for the selected classes.'); setBusy(false); return; }
 
       const stamp = new Date().toISOString().slice(0, 10);
       const title = `${school?.name || 'School'} — Students`;
       const subtitle = `${rows.length} student(s) · Generated ${new Date().toLocaleString()}`;
-      const ok = format === 'csv'
-        ? await exportCSV(`students_${stamp}`, rows, selectedFields, title)
-        : await exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields, previewTab);
-      if (ok) onClose?.();
+      if (format === 'csv') {
+        // CSV has nothing to preview — save/share straight away.
+        const ok = await exportCSV(`students_${stamp}`, rows, selectedFields, title);
+        if (ok) onClose?.();
+      } else {
+        // PDF → open the in-app preview; saving happens from there.
+        setPreview(await exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields));
+      }
     } catch (e) {
-      previewTab?.close();
       setErr(e.message || 'Export failed.');
     } finally {
       setBusy(false);
     }
   };
+
+  // While a PDF preview is up, show only it (over the page); closing it ends the
+  // whole export flow.
+  if (preview) {
+    return <PdfPreviewModal {...preview} onClose={() => { setPreview(null); onClose?.(); }} />;
+  }
 
   return (
     <Overlay onClose={onClose}>
@@ -434,17 +390,15 @@ export function ExportStudentsModal({
   );
 }
 
-// One-click print: the black-and-white student form PDF with ALL fields, no
-// modal. Used by the profile "Print" button. `school` comes from useAuth().
-// `previewTab` should be a window the caller opened synchronously on click (so
-// the popup blocker allows it); omit it and we open one here as a best effort.
-export async function printStudentForm(student, school, fields = STUDENT_EXPORT_FIELDS, previewTab = null) {
-  const tab = previewTab || window.open('', '_blank');
+// Build the one-click student form PDF (ALL fields, black-and-white). Used by the
+// profile "Print" button. Returns { blob, filename, title } for the caller to
+// show in <PdfPreviewModal>. `school` comes from useAuth().
+export async function buildStudentFormPdf(student, school, fields = STUDENT_EXPORT_FIELDS) {
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = (student?.name || 'student').replace(/[^\w-]+/g, '_');
   const title = `${student?.name || 'Student'}${student?.admission_no ? ` · ${student.admission_no}` : ''}`;
   const subtitle = `${school?.name || 'School'}`;
-  return exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, fields, tab);
+  return exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, fields);
 }
 
 // ── Single-student export (profile) ───────────────────────────────────────────
@@ -454,31 +408,34 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
   const { keys, toggle, setAll, selectedFields, allKeys } = useFieldSelection(fields);
   const [format, setFormat] = useState('pdf');
   const [err, setErr] = useState('');
-
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState(null); // { blob, filename, title } | null
 
   const run = async () => {
     setErr('');
     if (selectedFields.length === 0) { setErr('Pick at least one field to export.'); return; }
-    // Open the PDF preview tab within the click gesture (see previewPdf). CSV downloads.
-    const previewTab = format === 'pdf' ? window.open('', '_blank') : null;
     setBusy(true);
     try {
       const stamp = new Date().toISOString().slice(0, 10);
       const safeName = (student.name || 'student').replace(/[^\w-]+/g, '_');
       const title = `${student.name || 'Student'}${student.admission_no ? ` · ${student.admission_no}` : ''}`;
       const subtitle = `${school?.name || 'School'}`;
-      const ok = format === 'csv'
-        ? await exportCSV(`${safeName}_${stamp}`, [student], selectedFields, title)
-        : await exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields, previewTab);
-      if (ok) onClose?.();
+      if (format === 'csv') {
+        const ok = await exportCSV(`${safeName}_${stamp}`, [student], selectedFields, title);
+        if (ok) onClose?.();
+      } else {
+        setPreview(await exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields));
+      }
     } catch (e) {
-      previewTab?.close();
       setErr(e.message || 'Export failed.');
     } finally {
       setBusy(false);
     }
   };
+
+  if (preview) {
+    return <PdfPreviewModal {...preview} onClose={() => { setPreview(null); onClose?.(); }} />;
+  }
 
   return (
     <Overlay onClose={onClose}>
