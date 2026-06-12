@@ -9,6 +9,7 @@ import { useIsMobile } from '@/lib/useIsMobile';
 import { EnableNotifications } from '@/components/EnableNotifications';
 import { buildStudentFormPdf, TEACHER_EXPORT_FIELDS } from '@/components/StudentExport.jsx';
 import { HtmlPreviewModal, StudentFormPreview } from '@/components/ExportPreview.jsx';
+import { ChangePasswordCard } from '@/components/ChangePasswordCard.jsx';
 import { useAuth } from '@/auth/AuthContext';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
@@ -294,6 +295,8 @@ export default function StudentProfile() {
             </>
           )}
         </SectionCard>
+
+        <ChangePasswordCard />
       </>
     );
   }

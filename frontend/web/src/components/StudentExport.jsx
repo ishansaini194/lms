@@ -308,18 +308,30 @@ export function ExportStudentsModal({
       if (rows.length === 0) { setErr('No students found for the selected classes.'); setBusy(false); return; }
 
       const stamp = new Date().toISOString().slice(0, 10);
-      const title = `${school?.name || 'School'} — Students`;
+      // Name the file (and title) after the selected class scope so saved PDFs
+      // are self-describing: e.g. "Class-7-A_Students_2026-06-12.pdf".
+      const pickedLabels = classes.filter((c) => picked.has(String(c.value))).map((c) => c.label);
+      const allClasses = pickedLabels.length === classes.length;
+      let scope;
+      if (allClasses) scope = 'All-Classes';
+      else if (pickedLabels.length === 1) scope = `Class-${pickedLabels[0]}`;
+      else if (pickedLabels.length <= 3) scope = pickedLabels.join('-and-');
+      else scope = `${pickedLabels.length}-Classes`;
+      const baseName = `${scope}_Students_${stamp}`.replace(/[^\w.-]+/g, '-');
+      const titleScope = pickedLabels.length === 1 ? ` · Class ${pickedLabels[0]}`
+        : allClasses ? '' : ` · ${pickedLabels.length} classes`;
+      const title = `${school?.name || 'School'} — Students${titleScope}`;
       const subtitle = `${rows.length} student(s) · Generated ${new Date().toLocaleString()}`;
       if (format === 'csv') {
         // CSV has nothing to preview — save/share straight away.
-        const ok = await exportCSV(`students_${stamp}`, rows, selectedFields, title);
+        const ok = await exportCSV(baseName, rows, selectedFields, title);
         if (ok) onClose?.();
       } else {
         // PDF → show the HTML preview; the actual PDF is built on Save/Print.
         setPreview({
           title,
           node: <StudentsTablePreview school={school} rows={rows} fields={selectedFields} subtitle={subtitle} />,
-          getFile: () => exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields),
+          getFile: () => exportPDF(baseName, title, subtitle, rows, selectedFields),
         });
       }
     } catch (e) {
@@ -398,12 +410,18 @@ export function ExportStudentsModal({
   );
 }
 
+// Filename stem for a single student: name + admission no, file-safe, so saved
+// files are self-describing and don't collide for same-name students.
+function studentFileStem(student) {
+  return [student?.name, student?.admission_no].filter(Boolean).join('_').replace(/[^\w-]+/g, '_') || 'student';
+}
+
 // Build the one-click student form PDF (ALL fields, black-and-white). Used by the
 // profile "Print" button. Returns { blob, filename, title } for the caller to
 // build the PDF on Save. `school` comes from useAuth().
 export async function buildStudentFormPdf(student, school, fields = STUDENT_EXPORT_FIELDS) {
   const stamp = new Date().toISOString().slice(0, 10);
-  const safeName = (student?.name || 'student').replace(/[^\w-]+/g, '_');
+  const safeName = studentFileStem(student);
   const title = `${student?.name || 'Student'}${student?.admission_no ? ` · ${student.admission_no}` : ''}`;
   const subtitle = `${school?.name || 'School'}`;
   return exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, fields);
@@ -425,7 +443,7 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
     setBusy(true);
     try {
       const stamp = new Date().toISOString().slice(0, 10);
-      const safeName = (student.name || 'student').replace(/[^\w-]+/g, '_');
+      const safeName = studentFileStem(student);
       const title = `${student.name || 'Student'}${student.admission_no ? ` · ${student.admission_no}` : ''}`;
       const subtitle = `${school?.name || 'School'}`;
       if (format === 'csv') {

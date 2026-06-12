@@ -19,6 +19,7 @@ import {
 } from '@/components/admin/AdminChrome';
 import { HA7Modal, AcademicYearFormModal, ConfirmModal, PromoteStudentsModal, ManageExamTermsModal } from '@/pages/admin/extras.jsx';
 import { useAuth } from '@/auth/AuthContext';
+import { ChangePasswordCard } from '@/components/ChangePasswordCard.jsx';
 import {
   reportTerms,
 } from '@/mock/data';
@@ -734,6 +735,9 @@ const ProfilePanel = ({ school, set, currentYearLabel }) => {
             </div>
           ))}
         </Card>
+
+        {/* The admin's own login password (independent of the school-profile Save). */}
+        <ChangePasswordCard />
       </div>
     </div>
   );
