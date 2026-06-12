@@ -10,7 +10,7 @@ import { Btn, ModalShell } from '@/components/ui/primitives';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/auth/AuthContext';
 import { deliverFile } from '@/lib/fileDelivery';
-import { PdfPreviewModal } from '@/components/PdfPreview.jsx';
+import { HtmlPreviewModal, StudentsTablePreview, StudentFormPreview } from '@/components/ExportPreview.jsx';
 
 // ── field catalogue (label + how to read it off an enriched student row) ──────
 function fmtDate(iso) {
@@ -51,8 +51,8 @@ export const TEACHER_EXPORT_FIELDS = STUDENT_EXPORT_FIELDS.filter((f) => f.key !
 const DEFAULT_KEYS = ['name', 'admission_no', 'class_label', 'gender', 'dob', 'phone', 'father_name', 'father_contact'];
 
 // File delivery (Web Share on mobile, download on desktop) lives in
-// '@/lib/fileDelivery'. PDFs are previewed in-app first via <PdfPreviewModal>;
-// the generators below just return the blob + metadata for that modal to show.
+// '@/lib/fileDelivery'. PDFs are previewed in-app first as HTML (see
+// '@/components/ExportPreview'); the generators below build the blob on Save.
 
 // ── generators ────────────────────────────────────────────────────────────────
 function csvCell(v) {
@@ -276,7 +276,7 @@ export function ExportStudentsModal({
   const { keys, toggle, setAll, selectedFields, allKeys } = useFieldSelection(fields);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const [preview, setPreview] = useState(null); // { blob, filename, title } | null (PDF preview)
+  const [preview, setPreview] = useState(null); // { title, node, getFile } | null
 
   const allPicked = picked.size === classes.length && classes.length > 0;
   const toggleClass = (val, on) => setPicked((prev) => {
@@ -315,8 +315,12 @@ export function ExportStudentsModal({
         const ok = await exportCSV(`students_${stamp}`, rows, selectedFields, title);
         if (ok) onClose?.();
       } else {
-        // PDF → open the in-app preview; saving happens from there.
-        setPreview(await exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields));
+        // PDF → show the HTML preview; the actual PDF is built on Save/Print.
+        setPreview({
+          title,
+          node: <StudentsTablePreview school={school} rows={rows} fields={selectedFields} subtitle={subtitle} />,
+          getFile: () => exportPDF(`students_${stamp}`, title, subtitle, rows, selectedFields),
+        });
       }
     } catch (e) {
       setErr(e.message || 'Export failed.');
@@ -325,10 +329,14 @@ export function ExportStudentsModal({
     }
   };
 
-  // While a PDF preview is up, show only it (over the page); closing it ends the
+  // While the preview is up, show only it (over the page); closing it ends the
   // whole export flow.
   if (preview) {
-    return <PdfPreviewModal {...preview} onClose={() => { setPreview(null); onClose?.(); }} />;
+    return (
+      <HtmlPreviewModal title={preview.title} getFile={preview.getFile} onClose={() => { setPreview(null); onClose?.(); }}>
+        {preview.node}
+      </HtmlPreviewModal>
+    );
   }
 
   return (
@@ -392,7 +400,7 @@ export function ExportStudentsModal({
 
 // Build the one-click student form PDF (ALL fields, black-and-white). Used by the
 // profile "Print" button. Returns { blob, filename, title } for the caller to
-// show in <PdfPreviewModal>. `school` comes from useAuth().
+// build the PDF on Save. `school` comes from useAuth().
 export async function buildStudentFormPdf(student, school, fields = STUDENT_EXPORT_FIELDS) {
   const stamp = new Date().toISOString().slice(0, 10);
   const safeName = (student?.name || 'student').replace(/[^\w-]+/g, '_');
@@ -409,7 +417,7 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
   const [format, setFormat] = useState('pdf');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [preview, setPreview] = useState(null); // { blob, filename, title } | null
+  const [preview, setPreview] = useState(null); // { title, node, getFile } | null
 
   const run = async () => {
     setErr('');
@@ -424,7 +432,11 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
         const ok = await exportCSV(`${safeName}_${stamp}`, [student], selectedFields, title);
         if (ok) onClose?.();
       } else {
-        setPreview(await exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields));
+        setPreview({
+          title,
+          node: <StudentFormPreview student={student} fields={selectedFields} title={title} subtitle={subtitle} />,
+          getFile: () => exportStudentFormPDF(`${safeName}_${stamp}`, title, subtitle, student, selectedFields),
+        });
       }
     } catch (e) {
       setErr(e.message || 'Export failed.');
@@ -434,7 +446,11 @@ export function ExportStudentModal({ student, onClose, fields = STUDENT_EXPORT_F
   };
 
   if (preview) {
-    return <PdfPreviewModal {...preview} onClose={() => { setPreview(null); onClose?.(); }} />;
+    return (
+      <HtmlPreviewModal title={preview.title} getFile={preview.getFile} onClose={() => { setPreview(null); onClose?.(); }}>
+        {preview.node}
+      </HtmlPreviewModal>
+    );
   }
 
   return (

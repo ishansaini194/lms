@@ -8,7 +8,7 @@ import { loadFeesWithBalances, money, feeLabel } from '@/lib/studentFees';
 import { useIsMobile } from '@/lib/useIsMobile';
 import { EnableNotifications } from '@/components/EnableNotifications';
 import { buildStudentFormPdf, TEACHER_EXPORT_FIELDS } from '@/components/StudentExport.jsx';
-import { PdfPreviewModal } from '@/components/PdfPreview.jsx';
+import { HtmlPreviewModal, StudentFormPreview } from '@/components/ExportPreview.jsx';
 import { useAuth } from '@/auth/AuthContext';
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
@@ -126,8 +126,7 @@ export default function StudentProfile() {
   const [feeData, setFeeData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [printing, setPrinting] = useState(false);
-  const [preview, setPreview] = useState(null); // { blob, filename, title } | null
+  const [preview, setPreview] = useState(null); // { title, node, getFile } | null
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -159,16 +158,17 @@ export default function StudentProfile() {
   // the in-app preview (Save/Print from there). Reuses the admin form generator;
   // class_label is injected since /api/me/profile doesn't carry it, and fee
   // status is excluded (TEACHER_EXPORT_FIELDS).
-  const handlePrint = useCallback(async () => {
-    if (printing || !profile) return;
-    setPrinting(true);
-    try {
-      const row = { ...profile, class_label: klass };
-      setPreview(await buildStudentFormPdf(row, school, TEACHER_EXPORT_FIELDS));
-    } finally {
-      setPrinting(false);
-    }
-  }, [printing, profile, klass, school]);
+  const handlePrint = useCallback(() => {
+    if (!profile) return;
+    const row = { ...profile, class_label: klass };
+    const title = `${profile.name || 'Student'}${profile.admission_no ? ` · ${profile.admission_no}` : ''}`;
+    const subtitle = school?.name || 'School';
+    setPreview({
+      title,
+      node: <StudentFormPreview student={row} fields={TEACHER_EXPORT_FIELDS} title={title} subtitle={subtitle} />,
+      getFile: () => buildStudentFormPdf(row, school, TEACHER_EXPORT_FIELDS),
+    });
+  }, [profile, klass, school]);
 
   let body;
   if (loading) {
@@ -194,9 +194,7 @@ export default function StudentProfile() {
               </div>
             </div>
             <div style={{ flex: 1 }} />
-            <Btn variant="outline" size="sm" icon={I.download} onClick={handlePrint} disabled={printing}>
-              {printing ? 'Printing…' : 'Print'}
-            </Btn>
+            <Btn variant="outline" size="sm" icon={I.download} onClick={handlePrint}>Print</Btn>
             <Pill tone={p.is_active ? 'good' : 'neutral'} dot>{p.is_active ? 'Active' : 'Inactive'}</Pill>
           </div>
         </Card>
@@ -303,7 +301,11 @@ export default function StudentProfile() {
   return (
     <StudentChrome active="Profile" title="Profile" breadcrumb="Home">
       {body}
-      {preview && <PdfPreviewModal {...preview} onClose={() => setPreview(null)} />}
+      {preview && (
+        <HtmlPreviewModal title={preview.title} getFile={preview.getFile} onClose={() => setPreview(null)}>
+          {preview.node}
+        </HtmlPreviewModal>
+      )}
     </StudentChrome>
   );
 }
