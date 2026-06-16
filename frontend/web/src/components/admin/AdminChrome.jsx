@@ -7,6 +7,8 @@ import { I } from '@/components/icons';
 import { Avatar, ModalShell, Btn } from '@/components/ui/primitives';
 import { useAuth } from '@/auth/AuthContext';
 import { apiFetch } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
+import { AdminTabBar, TAB_BAR_HEIGHT } from '@/components/admin/AdminTabBar';
 
 // First letter of up to two words of the school name → logo initials.
 const schoolInitials = (name) => {
@@ -25,6 +27,21 @@ const adminNav = [
   { id: 'Notices',   icon: I.bell,   to: '/admin/notices' },
   { id: 'Exams',     icon: I.chart,  to: '/admin/exams' },
   { id: 'Settings',  icon: I.shield, to: '/admin/settings' },
+];
+
+// Mobile bottom-bar split: 5 most-used tabs (short labels) + a "More" overflow
+// for Teachers, Exams and Settings. Desktop keeps all 8 in the sidebar (adminNav).
+const adminTabsPrimary = [
+  { id: 'Dashboard', label: 'Home',     icon: I.home, to: '/admin' },
+  { id: 'Classes',   label: 'Classes',  icon: I.grid, to: '/admin/classes' },
+  { id: 'Students',  label: 'Students', icon: I.user, to: '/admin/students' },
+  { id: 'Fees',      label: 'Fees',     icon: I.card, to: '/admin/fees' },
+  { id: 'Notices',   label: 'Notices',  icon: I.bell, to: '/admin/notices' },
+];
+const adminTabsMore = [
+  { id: 'Teachers', label: 'Teachers', icon: I.user,   to: '/admin/teachers' },
+  { id: 'Exams',    label: 'Exams',    icon: I.chart,  to: '/admin/exams' },
+  { id: 'Settings', label: 'Settings', icon: I.shield, to: '/admin/settings' },
 ];
 
 const AdminSidebar = ({ active: activeProp }) => {
@@ -175,23 +192,104 @@ export const AdminTopBar = ({ title, breadcrumb, right }) => (
   </header>
 );
 
-export const AdminChrome = ({ active, title, breadcrumb, topRight, children, contentPad = 24 }) => (
-  <div className="hf" style={{
-    width: '100%', height: '100dvh', display: 'flex',
-    background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink, overflow: 'hidden',
-  }}>
-    <AdminSidebar active={active} />
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
-      <AdminTopBar title={title} breadcrumb={breadcrumb} right={topRight} />
-      <main className="hf-scroll" style={{
-        flex: 1, minHeight: 0, overflow: 'auto', padding: contentPad,
-        display: 'flex', flexDirection: 'column', gap: 18,
+// Compact mobile top bar: school mark + page title + sign-out. Self-contained
+// (own auth + confirm) so the desktop path is untouched. Mirrors TeacherChrome.
+const AdminMobileTopBar = ({ title }) => {
+  const navigate = useNavigate();
+  const { user, school, logout } = useAuth();
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const doLogout = () => { logout(); navigate('/login', { replace: true }); };
+
+  return (
+    <header style={{
+      position: 'sticky', top: 0, zIndex: 800,
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: 'calc(12px + env(safe-area-inset-top, 0px)) 16px 12px',
+      borderBottom: `1px solid ${hf.border}`, background: hf.surface,
+    }}>
+      <div style={{
+        width: 30, height: 30, borderRadius: 7, flexShrink: 0,
+        background: `linear-gradient(135deg, ${hf.primary}, oklch(0.55 0.16 290))`,
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        color: '#fff', fontFamily: hfFonts.ui, fontWeight: 700, fontSize: 13,
+      }}>{schoolInitials(school?.name)}</div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ ...hfText.h1, fontSize: 17, lineHeight: 1.15, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+        <div style={{ ...hfText.small, fontSize: 11, color: hf.muted, marginTop: -1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{school?.name || 'Admin console'}</div>
+      </div>
+      <button onClick={() => setConfirmOpen(true)} aria-label="Sign out" className="hf-btn" style={{
+        width: 40, height: 40, borderRadius: 9, flexShrink: 0,
+        border: `1px solid ${hf.border}`, background: hf.surface, color: hf.muted,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      }}>{I.logout || I.more}</button>
+
+      {confirmOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1000 }} onClick={() => setConfirmOpen(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', height: '100%' }}>
+            <ModalShell
+              title="Sign out of StudyMe?"
+              width={400}
+              footer={<>
+                <Btn variant="ghost" size="md" onClick={() => setConfirmOpen(false)}>Cancel</Btn>
+                <Btn variant="accent" size="md" onClick={() => { setConfirmOpen(false); doLogout(); }}>Sign out</Btn>
+              </>}
+            >
+              <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.6 }}>
+                Signed in as <b>{user?.display_name || user?.username || 'User'}</b>. You'll need to sign in again to access the admin console.
+              </div>
+            </ModalShell>
+          </div>
+        </div>
+      )}
+    </header>
+  );
+};
+
+export function AdminChrome({ active, title, breadcrumb, topRight, children, contentPad = 24 }) {
+  const isMobile = useIsMobile();
+  const location = useLocation();
+  const activeId = active || adminNav.find(n =>
+    n.to === '/admin' ? location.pathname === '/admin' : location.pathname.startsWith(n.to)
+  )?.id;
+
+  // ── Mobile: normal document scroll + fixed bottom tab bar ──
+  if (isMobile) {
+    return (
+      <div className="hf" style={{
+        minHeight: '100dvh', background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink,
+        paddingBottom: `calc(${TAB_BAR_HEIGHT}px + 8px + env(safe-area-inset-bottom, 0px))`,
       }}>
-        {children}
-      </main>
+        <AdminMobileTopBar title={title} />
+        <main style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {topRight && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>{topRight}</div>
+          )}
+          {children}
+        </main>
+        <AdminTabBar primary={adminTabsPrimary} more={adminTabsMore} active={activeId} />
+      </div>
+    );
+  }
+
+  // ── Desktop: fixed sidebar + topbar + flex-trapped scroll container ──
+  return (
+    <div className="hf" style={{
+      width: '100%', height: '100dvh', display: 'flex',
+      background: hf.bg, fontFamily: hfFonts.ui, color: hf.ink, overflow: 'hidden',
+    }}>
+      <AdminSidebar active={active} />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+        <AdminTopBar title={title} breadcrumb={breadcrumb} right={topRight} />
+        <main className="hf-scroll" style={{
+          flex: 1, minHeight: 0, overflow: 'auto', padding: contentPad,
+          display: 'flex', flexDirection: 'column', gap: 18,
+        }}>
+          {children}
+        </main>
+      </div>
     </div>
-  </div>
-);
+  );
+}
 
 export const Tabs = ({ items, active, onChange }) => (
   <div style={{

@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { apiFetch } from '@/lib/api';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
+import { useIsMobile } from '@/lib/useIsMobile';
 import {
   Card, Btn, Pill, Chip, Avatar, SubjectIcon, SectionHead, Stat, Sparkbar,
   ModalShell, StateFrame, SearchInput, FilterSelect, FInput, FSelect,
@@ -241,6 +242,7 @@ const HA1 = () => {
 // ─── A2 · Classes (grid) ──────────────────────────────────────────────────
 const HA2 = () => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [showAdd, setShowAdd] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
@@ -361,7 +363,7 @@ const HA2 = () => {
         )}
 
         {!loading && !error && visibleClasses.length > 0 && (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 14 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 14 }}>
           {visibleClasses.map((c) => {
             const title = `${c.name}${c.section ? '-' + c.section : ''}`;
             const isSetUp = c.class_year_id != null;
@@ -502,6 +504,7 @@ const HA2 = () => {
 // ─── A3 · Students (table + filters) ──────────────────────────────────────
 const HA3 = () => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [searchParams] = useSearchParams();
   const [showAdd, setShowAdd] = useState(false);
   const [showExport, setShowExport] = useState(false);
@@ -632,6 +635,32 @@ const HA3 = () => {
     }
   };
 
+  // Per-row action buttons (edit / reset password / deactivate, or reactivate
+  // when viewing the Inactive tab). `sz` lets mobile cards use larger tap targets
+  // than the dense desktop table. Each button stops propagation so it doesn't
+  // trigger the row's navigate-to-detail click.
+  const renderRowActions = (r, sz = 26) => {
+    const btn = (extra) => ({
+      width: sz, height: sz, borderRadius: 7, border: `1px solid ${hf.border}`,
+      background: hf.surface, display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+      ...extra,
+    });
+    if (statusFilter === 'inactive') {
+      return (
+        <button onClick={(e) => { e.stopPropagation(); reactivate(r.id); }} className="hf-btn" title="Reactivate" style={btn({ color: hf.good })}>{I.refresh}</button>
+      );
+    }
+    return (
+      <>
+        <button onClick={(e) => { e.stopPropagation(); setEditing(editInitialFromRow(r)); }} className="hf-btn" title="Edit" style={btn({ color: hf.inkSoft, fontSize: 12 })}>✎</button>
+        <button onClick={(e) => { e.stopPropagation(); setResetErr(''); setResetting(r); }} className="hf-btn" title="Reset password" style={btn({ color: hf.inkSoft })}>{I.lock}</button>
+        <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(r); }} className="hf-btn" title="Deactivate" style={btn({ color: hf.accent })}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
+        </button>
+      </>
+    );
+  };
+
   return (
     <>
       <AdminChrome
@@ -677,7 +706,52 @@ const HA3 = () => {
           <span style={{ ...hfText.small, color: hf.muted }}>Showing {rows.length} of {total}</span>
         </div>
 
-        {/* Table */}
+        {/* Shared loading / error / empty states */}
+        {loading && (
+          <Card padding={0}><div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading students…</div></Card>
+        )}
+        {error && !loading && (
+          <Card padding={0}><div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load: {error}</div></Card>
+        )}
+        {!loading && !error && rows.length === 0 && (
+          <Card padding={0}><div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No students yet.</div></Card>
+        )}
+
+        {/* Mobile: stacked cards (the 8-col table doesn't fit a phone). */}
+        {!loading && !error && rows.length > 0 && isMobile && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {rows.map((r) => (
+              <Card key={r.id} padding={13} className="hf-clickable"
+                onClick={() => navigate(`/admin/students/${r.id}`)}
+                style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 11 }}>
+                  <Avatar name={r.name} size={38} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ ...hfText.body, fontWeight: 650, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.name}</div>
+                    <div style={{ ...hfText.small, color: hf.muted, ...hfText.num }}>
+                      Adm. {r.admission_no} · {r.class_label || '—'}{r.section ? `-${r.section}` : ''}
+                    </div>
+                  </div>
+                  {feeStatusPill(r.fee_status)}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                  <span style={{ ...hfText.num, fontSize: 12.5, color: hf.ink2 }}>{r.phone || 'No phone'}</span>
+                  <div style={{ display: 'flex', gap: 8 }}>{renderRowActions(r, 36)}</div>
+                </div>
+              </Card>
+            ))}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 2px' }}>
+              <span style={{ ...hfText.small, color: hf.muted }}>Page {page} of {totalPages}</span>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <Btn variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>‹ Prev</Btn>
+                <Btn variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>Next ›</Btn>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Desktop: dense table */}
+        {!loading && !error && rows.length > 0 && !isMobile && (
         <Card padding={0}>
           <div style={{
             display: 'grid', gridTemplateColumns: '60px 30px 1.6fr 70px 70px 130px 110px 84px',
@@ -694,16 +768,7 @@ const HA3 = () => {
             <div>Fee status</div>
             <div />
           </div>
-          {loading && (
-            <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>Loading students…</div>
-          )}
-          {error && !loading && (
-            <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.accent }}>Couldn't load: {error}</div>
-          )}
-          {!loading && !error && rows.length === 0 && (
-            <div style={{ padding: '40px 20px', textAlign: 'center', ...hfText.small, color: hf.muted }}>No students yet.</div>
-          )}
-          {!loading && !error && rows.map((r, i) => (
+          {rows.map((r, i) => (
             <div key={r.id} className="hf-row hf-clickable"
               onClick={() => navigate(`/admin/students/${r.id}`)}
               style={{
@@ -719,17 +784,7 @@ const HA3 = () => {
               <div style={{ ...hfText.num, fontSize: 11.5, color: hf.ink2 }}>{r.phone || '—'}</div>
               <div>{feeStatusPill(r.fee_status)}</div>
               <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
-                {statusFilter === 'inactive' ? (
-                  <button onClick={(e) => { e.stopPropagation(); reactivate(r.id); }} className="hf-btn" title="Reactivate" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.good, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.refresh}</button>
-                ) : (
-                  <>
-                    <button onClick={(e) => { e.stopPropagation(); setEditing(editInitialFromRow(r)); }} className="hf-btn" title="Edit" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 12 }}>✎</button>
-                    <button onClick={(e) => { e.stopPropagation(); setResetErr(''); setResetting(r); }} className="hf-btn" title="Reset password" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.inkSoft, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>{I.lock}</button>
-                    <button onClick={(e) => { e.stopPropagation(); setDelErr(''); setDeleting(r); }} className="hf-btn" title="Deactivate" style={{ width: 26, height: 26, borderRadius: 7, border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg>
-                    </button>
-                  </>
-                )}
+                {renderRowActions(r, 26)}
               </div>
             </div>
           ))}
@@ -744,6 +799,7 @@ const HA3 = () => {
             </div>
           </div>
         </Card>
+        )}
       </AdminChrome>
       {showExport && (
         <ExportStudentsModal classOptions={classOptions} initialClassIds={classFilter ? [classFilter] : null} onClose={() => setShowExport(false)} />
@@ -1241,6 +1297,7 @@ const CustomFeeModal = ({ studentId, studentName, onClose, onAdded }) => {
 const HA3Detail = () => {
   const { id } = useParams();              // student id from the URL
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [showEdit, setShowEdit] = useState(false);
   const [showGenFees, setShowGenFees] = useState(false);
   const [showCustomFee, setShowCustomFee] = useState(false);
@@ -1318,10 +1375,10 @@ const HA3Detail = () => {
       >
         {/* Hero */}
         <Card style={{ background: `linear-gradient(135deg, ${hf.surface} 0%, ${hf.primarySoft} 100%)` }}>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-            <Avatar name={s.name} size={80} style={{ boxShadow: '0 4px 14px rgba(20,24,32,0.10)' }} />
-            <div style={{ flex: 1 }}>
-              <div style={{ ...hfText.display, fontSize: 26 }}>{s.name}</div>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Avatar name={s.name} size={isMobile ? 56 : 80} style={{ boxShadow: '0 4px 14px rgba(20,24,32,0.10)' }} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ ...hfText.display, fontSize: isMobile ? 20 : 26 }}>{s.name}</div>
               <div style={{ display: 'flex', gap: 6, marginTop: 8, flexWrap: 'wrap' }}>
                 {s.is_active
                   ? <Pill tone="good" dot>Active</Pill>
@@ -1338,7 +1395,7 @@ const HA3Detail = () => {
           </div>
         </Card>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 14, alignItems: 'start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1.2fr 1fr', gap: 14, alignItems: 'start' }}>
           {/* LEFT: details */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <Card padding={0}>
@@ -1362,7 +1419,7 @@ const HA3Detail = () => {
               <InfoRow label="ePunjab ID" value={s.epunjab_id} />
             </Card>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
               {[
                 { role: 'Father', name: s.father_name, phone: s.father_contact },
                 { role: 'Mother', name: s.mother_name, phone: s.mother_contact },
