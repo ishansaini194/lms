@@ -2,6 +2,7 @@
 // Same names, same markup; only change is `const` -> `export const`
 // and importing the shared tokens/icons instead of reading window globals.
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 
@@ -164,9 +165,14 @@ export const Sparkbar = ({ values, max = 100, color = hf.primary, height = 28 })
   </div>
 );
 
-export const ModalShell = ({ title, subtitle, children, footer, width = 520, accent }) => (
+export const ModalShell = ({ title, subtitle, children, footer, width = 520, accent }) => createPortal((
+  // Portaled to <body> so no call-site wrapper's stacking context (most are
+  // position:fixed; zIndex:50) can trap the modal below the mobile bottom tab
+  // bar (zIndex 900). React still bubbles synthetic events through the React
+  // tree, so parents' backdrop-close onClick handlers keep working.
   <div className="hf" style={{
-    width: '100%', height: '100%', padding: 24, boxSizing: 'border-box',
+    position: 'fixed', inset: 0, zIndex: 1100,
+    padding: 24, boxSizing: 'border-box',
     background: 'rgba(20,24,32,0.32)', display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontFamily: hfFonts.ui, color: hf.ink,
   }}>
@@ -198,7 +204,7 @@ export const ModalShell = ({ title, subtitle, children, footer, width = 520, acc
       )}
     </div>
   </div>
-);
+), document.body);
 
 export const StateFrame = ({ title, children }) => (
   <div className="hf" style={{
