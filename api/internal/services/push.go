@@ -2,6 +2,7 @@ package services
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -116,16 +117,19 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 	}
 
 	// 3. Send to each subscription with its per-role URL; clean dead ones (410/404).
+	deliverPush(db, fmt.Sprintf("notice %d", noticeID), notice.Title, snippet(notice.Body, 140), recipients)
+}
+
+// deliverPush sends the same title/body to every recipient (each with its own
+// portal URL), cleans dead endpoints (410/404), and logs a per-role summary
+// under tag. Shared by notice + homework pushes. pushCfg is read-only here.
+func deliverPush(db *gorm.DB, tag, title, body string, recipients map[uint]recipient) {
 	var sentStudents, sentTeachers, failed, cleaned int
 	for _, r := range recipients {
-		payload, err := json.Marshal(pushPayload{
-			Title: notice.Title,
-			Body:  snippet(notice.Body, 140),
-			URL:   r.url,
-		})
+		payload, err := json.Marshal(pushPayload{Title: title, Body: body, URL: r.url})
 		if err != nil {
 			failed++
-			log.Printf("[push] notice %d: failed marshaling payload (sub %d): %v", noticeID, r.sub.ID, err)
+			log.Printf("[push] %s: failed marshaling payload (sub %d): %v", tag, r.sub.ID, err)
 			continue
 		}
 
@@ -140,7 +144,7 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 		})
 		if err != nil {
 			failed++
-			log.Printf("[push] notice %d: send error (sub %d): %v", noticeID, r.sub.ID, err)
+			log.Printf("[push] %s: send error (sub %d): %v", tag, r.sub.ID, err)
 			continue
 		}
 		status := resp.StatusCode
@@ -152,7 +156,7 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 			if delErr := db.Where("id = ?", r.sub.ID).Delete(&models.PushSubscription{}).Error; delErr == nil {
 				cleaned++
 			} else {
-				log.Printf("[push] notice %d: failed cleaning dead sub %d: %v", noticeID, r.sub.ID, delErr)
+				log.Printf("[push] %s: failed cleaning dead sub %d: %v", tag, r.sub.ID, delErr)
 			}
 		case status >= 200 && status < 300:
 			if r.isTeacher {
@@ -162,11 +166,11 @@ func SendNoticePush(db *gorm.DB, schoolID, noticeID uint) {
 			}
 		default:
 			failed++
-			log.Printf("[push] notice %d: non-2xx (sub %d): %d", noticeID, r.sub.ID, status)
+			log.Printf("[push] %s: non-2xx (sub %d): %d", tag, r.sub.ID, status)
 		}
 	}
-	log.Printf("[push] notice %d: sent %d (students %d, teachers %d), failed %d, cleaned %d",
-		noticeID, sentStudents+sentTeachers, sentStudents, sentTeachers, failed, cleaned)
+	log.Printf("[push] %s: sent %d (students %d, teachers %d), failed %d, cleaned %d",
+		tag, sentStudents+sentTeachers, sentStudents, sentTeachers, failed, cleaned)
 }
 
 // recipient pairs a subscription with the URL its portal should open and whether
@@ -299,6 +303,97 @@ func noticeTargetStudentIDs(db *gorm.DB, schoolID uint, notice *models.Notice) (
 		Where("school_id = ? AND class_year_id IN ? AND status = ?", schoolID, classYearIDs, "active").
 		Pluck("student_id", &studentIDs).Error
 	return studentIDs, err
+}
+
+// SendHomeworkPush delivers a Web Push to every subscribed student the homework
+// targets. Fire-and-forget — call as `go SendHomeworkPush(db, schoolID, hwID)`.
+// Uses the *gorm.DB directly (never the Fiber context), so it safely outlives the
+// request. Homework is always class-targeted and notifies students only (a
+// teacher posting homework never pushes to other teachers).
+func SendHomeworkPush(db *gorm.DB, schoolID, homeworkID uint) {
+	if !pushCfg.enabled {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[push] recovered while sending homework %d: %v", homeworkID, r)
+		}
+	}()
+
+	var hw models.Homework
+	if err := db.Where("id = ? AND school_id = ?", homeworkID, schoolID).First(&hw).Error; err != nil {
+		log.Printf("[push] homework %d not found for school %d: %v", homeworkID, schoolID, err)
+		return
+	}
+
+	subs, err := homeworkStudentSubs(db, schoolID, homeworkID)
+	if err != nil {
+		log.Printf("[push] homework %d: failed resolving student subscriptions: %v", homeworkID, err)
+		return
+	}
+	if len(subs) == 0 {
+		return
+	}
+
+	recipients := make(map[uint]recipient, len(subs))
+	for i := range subs {
+		recipients[subs[i].ID] = recipient{sub: subs[i], url: "/student/homework", isTeacher: false}
+	}
+
+	// Title carries the subject when set ("Maths homework"), else a generic label.
+	title := "New homework"
+	if hw.SubjectID != nil {
+		var name string
+		if err := db.Model(&models.Subject{}).
+			Where("id = ? AND school_id = ?", *hw.SubjectID, schoolID).
+			Pluck("name", &name).Error; err == nil && name != "" {
+			title = name + " homework"
+		}
+	}
+
+	deliverPush(db, fmt.Sprintf("homework %d", homeworkID), title, snippet(hw.Content, 140), recipients)
+}
+
+// homeworkStudentSubs resolves the push_subscriptions of students a homework
+// reaches: target class-years → active enrollments → active student-role users →
+// subscriptions. School-scoped, batched (no N+1). Empty (not an error) when
+// nobody matches. Mirrors studentNoticeSubs's class-targeted path.
+func homeworkStudentSubs(db *gorm.DB, schoolID, homeworkID uint) ([]models.PushSubscription, error) {
+	var classYearIDs []uint
+	if err := db.Model(&models.HomeworkTarget{}).
+		Where("homework_id = ?", homeworkID).
+		Pluck("class_year_id", &classYearIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(classYearIDs) == 0 {
+		return nil, nil
+	}
+
+	var studentIDs []uint
+	if err := db.Model(&models.Enrollment{}).
+		Distinct("student_id").
+		Where("school_id = ? AND class_year_id IN ? AND status = ?", schoolID, classYearIDs, "active").
+		Pluck("student_id", &studentIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(studentIDs) == 0 {
+		return nil, nil
+	}
+
+	var userIDs []uint
+	if err := db.Model(&models.User{}).
+		Where("school_id = ? AND role = ? AND is_active = ? AND student_id IN ?",
+			schoolID, "student", true, studentIDs).
+		Pluck("id", &userIDs).Error; err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 {
+		return nil, nil
+	}
+
+	var subs []models.PushSubscription
+	err := db.Where("school_id = ? AND user_id IN ?", schoolID, userIDs).Find(&subs).Error
+	return subs, err
 }
 
 // snippet trims body text to a short, rune-safe notification preview.

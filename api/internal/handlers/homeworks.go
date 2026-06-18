@@ -10,6 +10,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
+	"github.com/ishansaini194/lms/api/internal/services"
 	"gorm.io/gorm"
 )
 
@@ -304,6 +305,11 @@ func (h *HomeworksHandler) Create(c *fiber.Ctx) error {
 		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create homework"})
 	}
+
+	// Fire-and-forget Web Push to the targeted students. Captures plain values +
+	// the *gorm.DB (never the Fiber context); a push failure can't affect this
+	// already-committed response. Mirrors the notice create path.
+	go services.SendHomeworkPush(h.DB, schoolID, homework.ID)
 
 	return c.Status(fiber.StatusCreated).JSON(homeworkResponse{Homework: homework, ClassYearIDs: body.ClassYearIDs})
 }
