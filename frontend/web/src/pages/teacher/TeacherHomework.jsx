@@ -4,6 +4,7 @@ import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
 import { apiFetch, apiUpload } from '@/lib/api';
+import { useIsMobile } from '@/lib/useIsMobile';
 
 // Attachment constraints — mirror the backend (JPG/PNG/PDF, 25MB).
 const ATTACH_ACCEPT = 'image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf';
@@ -96,8 +97,44 @@ const FileRow = ({ name, size, pending, onRemove }) => (
 );
 
 const HomeworkRow = ({ hw, onEdit, onDelete }) => {
+  const isMobile = useIsMobile();
   const overdue = isOverdue(hw.due_date);
   const dateLabel = fmtDate(hw.due_date);
+
+  const dueEl = dateLabel
+    ? (overdue
+      ? <Pill tone="accent">Overdue · {dateLabel}</Pill>
+      : <span style={{ ...hfText.small, color: hf.muted }}>Due {dateLabel}</span>)
+    : <span style={{ ...hfText.small, color: hf.faint }}>no due date</span>;
+  const actions = (
+    <div style={{ display: 'flex', gap: 6 }}>
+      <Btn variant="ghost" size="sm" onClick={onEdit}>Edit</Btn>
+      <Btn variant="ghost" size="sm" onClick={onDelete}>Delete</Btn>
+    </div>
+  );
+
+  // Mobile: stack so the content text gets the full card width (otherwise the
+  // date + action buttons squeeze it to one word per line).
+  if (isMobile) {
+    return (
+      <div style={{
+        display: 'flex', flexDirection: 'column', gap: 10,
+        padding: '12px 14px', borderRadius: 10,
+        background: hf.surface, border: `1px solid ${hf.border}`,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ ...hfText.body, fontWeight: 700, color: hw.subject_name ? hf.ink : hf.muted }}>{hw.subject_name || 'Homework'}</span>
+          {(hw.class_labels || []).map((l, i) => <ClassChip key={i} label={l} />)}
+        </div>
+        <div style={{ ...hfText.small, color: hf.inkSoft, lineHeight: 1.5 }}>{truncate(hw.content)}</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
+          {dueEl}
+          {actions}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 14,
@@ -112,16 +149,9 @@ const HomeworkRow = ({ hw, onEdit, onDelete }) => {
         <div style={{ ...hfText.small, color: hf.inkSoft, marginTop: 3 }}>{truncate(hw.content)}</div>
       </div>
       <div style={{ minWidth: 120, textAlign: 'right' }}>
-        {dateLabel
-          ? (overdue
-            ? <Pill tone="accent">Overdue · {dateLabel}</Pill>
-            : <span style={{ ...hfText.small, color: hf.muted }}>Due {dateLabel}</span>)
-          : <span style={{ ...hfText.small, color: hf.faint }}>no due date</span>}
+        {dueEl}
       </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <Btn variant="ghost" size="sm" onClick={onEdit}>Edit</Btn>
-        <Btn variant="ghost" size="sm" onClick={onDelete}>Delete</Btn>
-      </div>
+      {actions}
     </div>
   );
 };
