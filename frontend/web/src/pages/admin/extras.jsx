@@ -280,11 +280,16 @@ const ConfirmModal = ({ title, message, confirmLabel = 'Confirm', danger = true,
 const TeacherFormModal = ({ onClose, onSaved, initial }) => {
   const isEdit = !!initial;
   const [f, setF] = useState({
-    name: '', phone: '', email: '', subject: '', employee_id: '',
+    name: '', phone: '', email: '', subject: '', subject_id: '', employee_id: '',
     qualification: '', username: '', is_active: true, ...(initial || {}),
   });
   const set = (k) => (v) => setF(p => ({ ...p, [k]: v }));
 
+  const [subjects, setSubjects] = useState([]); // master subject list
+  useEffect(() => {
+    apiFetch('/api/subjects').then((s) => setSubjects(Array.isArray(s) ? s : [])).catch(() => {});
+  }, []);
+  const subjectOptions = [{ value: '', label: 'No subject' }, ...subjects.map((s) => ({ value: String(s.id), label: s.name }))];
 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -303,7 +308,7 @@ const TeacherFormModal = ({ onClose, onSaved, initial }) => {
             name: f.name,
             phone: f.phone,
             email: f.email,
-            subject: f.subject,
+            subject_id: f.subject_id ? Number(f.subject_id) : 0, // 0 clears the link
             qualification: f.qualification,
           },
         });
@@ -329,7 +334,7 @@ const TeacherFormModal = ({ onClose, onSaved, initial }) => {
           username: f.username,
           phone: f.phone,
           email: f.email,
-          subject: f.subject,
+          subject_id: f.subject_id ? Number(f.subject_id) : 0,
           qualification: f.qualification,
         },
       });
@@ -403,8 +408,8 @@ const TeacherFormModal = ({ onClose, onSaved, initial }) => {
           </Row2>
           <Row2>
             <div>
-              <FieldLabel required>Subject</FieldLabel>
-              <FInput value={f.subject} onChange={set('subject')} />
+              <FieldLabel>Subject</FieldLabel>
+              <FSelect value={f.subject_id ? String(f.subject_id) : ''} onChange={set('subject_id')} options={subjectOptions} />
             </div>
             {isEdit ? (
               <div>
@@ -1504,12 +1509,13 @@ const AStToastDenied = () => (
 const ManageSubjectsModal = ({ teacher, onClose }) => {
   const [assignments, setAssignments] = useState([]);
   const [classYears, setClassYears] = useState([]);
+  const [subjects, setSubjects] = useState([]); // master subject list
   const [ay, setAy] = useState(null); // { id, year_label } | null
   const [loading, setLoading] = useState(true);
   const [loadErr, setLoadErr] = useState('');
 
   const [addClassId, setAddClassId] = useState(null);
-  const [addSubject, setAddSubject] = useState('');
+  const [addSubjectId, setAddSubjectId] = useState(''); // master-list subject id (string for FSelect)
   const [adding, setAdding] = useState(false);
   const [addErr, setAddErr] = useState('');
   const [removingId, setRemovingId] = useState(null);
@@ -1520,9 +1526,11 @@ const ManageSubjectsModal = ({ teacher, onClose }) => {
     Promise.all([
       apiFetch(`/api/teaching-assignments?teacher_id=${teacher.id}`),
       apiFetch('/api/academic-years'),
+      apiFetch('/api/subjects').catch(() => []),
     ])
-      .then(async ([asg, years]) => {
+      .then(async ([asg, years, subs]) => {
         setAssignments(Array.isArray(asg) ? asg : []);
+        setSubjects(Array.isArray(subs) ? subs : []);
         const cur = Array.isArray(years) && years.find((y) => y.is_current);
         setAy(cur ? { id: cur.id, year_label: cur.year_label } : null);
         // Picker offers current-AY class-years only.
@@ -1536,6 +1544,7 @@ const ManageSubjectsModal = ({ teacher, onClose }) => {
 
   const cyLabel = (cy) => (cy.class ? `${cy.class.name}${cy.class.section ? '-' + cy.class.section : ''}` : `Class ${cy.class_id}`);
   const classOptions = classYears.map((cy) => ({ value: cy.id, label: cyLabel(cy) }));
+  const subjectOptions = [{ value: '', label: 'Pick a subject…' }, ...subjects.map((s) => ({ value: String(s.id), label: s.name }))];
   const firstName = (teacher.name || '').split(' ')[0] || 'this teacher';
 
   const remove = async (id) => {
@@ -1553,16 +1562,16 @@ const ManageSubjectsModal = ({ teacher, onClose }) => {
 
   const add = async () => {
     setAddErr('');
-    if (!addClassId || !addSubject.trim()) return;
+    if (!addClassId || !addSubjectId) return;
     setAdding(true);
     try {
       const row = await apiFetch('/api/teaching-assignments', {
         method: 'POST',
-        body: { teacher_id: teacher.id, class_year_id: addClassId, subject: addSubject.trim() },
+        body: { teacher_id: teacher.id, class_year_id: addClassId, subject_id: Number(addSubjectId) },
       });
       setAssignments((list) => [...list, row]);
       setAddClassId(null);
-      setAddSubject('');
+      setAddSubjectId('');
     } catch (e) {
       // 409 → friendly "already assigned" (the one error an admin actually hits).
       setAddErr(e.message || 'Failed to add');
@@ -1618,10 +1627,15 @@ const ManageSubjectsModal = ({ teacher, onClose }) => {
                   <div style={{ flex: 1 }}>
                     <SearchableSelect value={addClassId} onChange={(v) => setAddClassId(v)} options={classOptions} placeholder="Pick a class…" />
                   </div>
-                  <div style={{ width: 150 }}>
-                    <FInput value={addSubject} onChange={setAddSubject} placeholder="Subject" />
+                  <div style={{ width: 160 }}>
+                    <FSelect value={addSubjectId} onChange={setAddSubjectId} options={subjectOptions} />
                   </div>
-                  <Btn variant="primary" size="md" onClick={add} disabled={adding || !addClassId || !addSubject.trim()}>{adding ? '…' : 'Add'}</Btn>
+                  <Btn variant="primary" size="md" onClick={add} disabled={adding || !addClassId || !addSubjectId}>{adding ? '…' : 'Add'}</Btn>
+                </div>
+              )}
+              {ay && subjects.length === 0 && (
+                <div style={{ marginTop: 8, ...hfText.small, color: hf.muted }}>
+                  No subjects yet — add them in Settings → Subjects first.
                 </div>
               )}
               {addErr && (

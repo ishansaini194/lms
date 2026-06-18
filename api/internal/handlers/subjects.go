@@ -172,3 +172,16 @@ func subjectExistsInSchool(db *gorm.DB, subjectID, schoolID uint) bool {
 		Count(&count)
 	return count > 0
 }
+
+// subjectNameByID resolves a subject id to its master-list name within a school.
+// Second return is false when the id doesn't belong to the school. Used to
+// denormalize the name onto teacher / teaching_assignment writes.
+func subjectNameByID(db *gorm.DB, subjectID, schoolID uint) (string, bool) {
+	var s models.Subject
+	if err := db.Select("name").
+		Where("id = ? AND school_id = ?", subjectID, schoolID).
+		First(&s).Error; err != nil {
+		return "", false
+	}
+	return s.Name, true
+}

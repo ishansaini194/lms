@@ -47,7 +47,8 @@ CREATE TABLE
         name VARCHAR(200) NOT NULL,
         phone VARCHAR(20),
         email VARCHAR(200),
-        subject VARCHAR(100),
+        subject VARCHAR(100), -- legacy free-text label; subject_id is the linked master-list ref
+        subject_id BIGINT, -- FK to subjects added after the subjects table (created later below)
         qualification VARCHAR(200),
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
@@ -179,7 +180,8 @@ CREATE TABLE
         school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
         teacher_id BIGINT NOT NULL REFERENCES teachers (id) ON DELETE CASCADE,
         class_year_id BIGINT NOT NULL REFERENCES class_years (id) ON DELETE CASCADE,
-        subject VARCHAR(100) NOT NULL,
+        subject VARCHAR(100) NOT NULL, -- legacy free-text; mirrors subject_id's name
+        subject_id BIGINT, -- FK to subjects added after the subjects table (created later below)
         is_active BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW (),
@@ -318,6 +320,18 @@ CREATE TABLE
     );
 
 CREATE INDEX idx_subjects_school ON subjects (school_id);
+
+-- Link teachers + teaching_assignments to the subjects master list. The columns
+-- are declared above (before subjects exists); the FKs/indexes are added here now
+-- that subjects is created. ON DELETE SET NULL so removing a subject doesn't wipe
+-- the row — the legacy free-text `subject` remains as a label.
+ALTER TABLE teachers ADD CONSTRAINT teachers_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES subjects (id) ON DELETE SET NULL;
+
+ALTER TABLE teaching_assignments ADD CONSTRAINT teaching_assignments_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES subjects (id) ON DELETE SET NULL;
+
+CREATE INDEX idx_teachers_subject ON teachers (subject_id);
+
+CREATE INDEX idx_teaching_assignments_subject ON teaching_assignments (subject_id);
 
 -- homeworks
 CREATE TABLE
@@ -518,3 +532,44 @@ CREATE INDEX idx_audit_school_entity ON audit_logs (school_id, entity_type, enti
 CREATE INDEX idx_audit_school_created ON audit_logs (school_id, created_at DESC);
 
 CREATE INDEX idx_audit_user ON audit_logs (user_id);
+
+-- ───────────────────────────────────────────────────────────────────────────
+-- One-time subject-link backfill (no-op on a fresh install)
+-- ───────────────────────────────────────────────────────────────────────────
+-- Links legacy free-text teacher / teaching_assignment subjects to the subjects
+-- master list: auto-creates any missing subject (skipping blanks and the 'Any'
+-- placeholder), then sets subject_id by matching name. On a fresh database the
+-- source tables are empty, so this selects/updates nothing — it lives here only
+-- to keep the schema file self-contained for databases seeded with legacy data.
+
+INSERT INTO subjects (school_id, name, is_active, created_at, updated_at)
+SELECT DISTINCT ON (src.school_id, lower(src.subject))
+       src.school_id, src.subject, TRUE, NOW (), NOW ()
+FROM (
+    SELECT school_id, subject FROM teaching_assignments
+        WHERE COALESCE(subject, '') <> '' AND lower(subject) <> 'any'
+    UNION ALL
+    SELECT school_id, subject FROM teachers
+        WHERE COALESCE(subject, '') <> '' AND lower(subject) <> 'any'
+) src
+WHERE NOT EXISTS (
+    SELECT 1 FROM subjects s
+    WHERE s.school_id = src.school_id AND lower(s.name) = lower(src.subject)
+)
+ORDER BY src.school_id, lower(src.subject), src.subject;
+
+UPDATE teaching_assignments ta
+SET subject_id = s.id
+FROM subjects s
+WHERE s.school_id = ta.school_id
+  AND lower(s.name) = lower(ta.subject)
+  AND ta.subject_id IS NULL
+  AND COALESCE(ta.subject, '') <> '';
+
+UPDATE teachers t
+SET subject_id = s.id
+FROM subjects s
+WHERE s.school_id = t.school_id
+  AND lower(s.name) = lower(t.subject)
+  AND t.subject_id IS NULL
+  AND COALESCE(t.subject, '') <> '';

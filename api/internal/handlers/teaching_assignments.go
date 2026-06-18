@@ -25,6 +25,7 @@ type taListItem struct {
 	TeacherID   uint   `json:"teacher_id"`
 	ClassYearID uint   `json:"class_year_id"`
 	Subject     string `json:"subject"`
+	SubjectID   *uint  `json:"subject_id,omitempty"`
 	ClassLabel  string `json:"class_label"` // "2-A"
 	IsActive    bool   `json:"is_active"`
 }
@@ -32,7 +33,8 @@ type taListItem struct {
 type createTARequest struct {
 	TeacherID   uint   `json:"teacher_id"`
 	ClassYearID uint   `json:"class_year_id"`
-	Subject     string `json:"subject"`
+	Subject     string `json:"subject"`     // legacy free-text; used if SubjectID is absent
+	SubjectID   *uint  `json:"subject_id"`  // preferred: a subjects master-list id
 }
 
 // classLabelsFor resolves class_year_id → "name-section" for a set of ids
@@ -92,6 +94,7 @@ func (h *TeachingAssignmentsHandler) List(c *fiber.Ctx) error {
 			TeacherID:   r.TeacherID,
 			ClassYearID: r.ClassYearID,
 			Subject:     r.Subject,
+			SubjectID:   r.SubjectID,
 			ClassLabel:  labels[r.ClassYearID],
 			IsActive:    r.IsActive,
 		})
@@ -108,6 +111,20 @@ func (h *TeachingAssignmentsHandler) Create(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid request"})
 	}
 	body.Subject = strings.TrimSpace(body.Subject)
+
+	// Prefer the master-list subject_id; resolve it to its name so the legacy
+	// `subject` text (and its unique index) stays in sync. Fall back to free-text
+	// `subject` for older clients.
+	var subjectID *uint
+	if body.SubjectID != nil && *body.SubjectID > 0 {
+		name, ok := subjectNameByID(h.DB, *body.SubjectID, schoolID)
+		if !ok {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject not found in this school"})
+		}
+		body.Subject = name
+		subjectID = body.SubjectID
+	}
+
 	if body.TeacherID == 0 || body.ClassYearID == 0 || body.Subject == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "teacher_id, class_year_id and subject are required"})
 	}
@@ -140,6 +157,7 @@ func (h *TeachingAssignmentsHandler) Create(c *fiber.Ctx) error {
 		TeacherID:   body.TeacherID,
 		ClassYearID: body.ClassYearID,
 		Subject:     body.Subject,
+		SubjectID:   subjectID,
 		IsActive:    true,
 	}
 	if err := h.DB.Create(&ta).Error; err != nil {
@@ -156,11 +174,14 @@ func (h *TeachingAssignmentsHandler) Create(c *fiber.Ctx) error {
 			if existing.IsActive {
 				return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "this teacher is already assigned that subject for this class"})
 			}
-			if e := h.DB.Model(&existing).Update("is_active", true).Error; e != nil {
+			// Reactivate the dormant row and (re)link its subject_id in case it
+			// predates the master-list link or was cleared.
+			if e := h.DB.Model(&existing).Updates(map[string]interface{}{"is_active": true, "subject_id": subjectID}).Error; e != nil {
 				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create assignment"})
 			}
 			ta = existing
 			ta.IsActive = true
+			ta.SubjectID = subjectID
 		} else {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to create assignment"})
 		}
@@ -172,6 +193,7 @@ func (h *TeachingAssignmentsHandler) Create(c *fiber.Ctx) error {
 		TeacherID:   ta.TeacherID,
 		ClassYearID: ta.ClassYearID,
 		Subject:     ta.Subject,
+		SubjectID:   ta.SubjectID,
 		ClassLabel:  labels[ta.ClassYearID],
 		IsActive:    ta.IsActive,
 	})

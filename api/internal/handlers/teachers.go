@@ -173,7 +173,8 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 		EmployeeID    string `json:"employee_id"`
 		Phone         string `json:"phone"`
 		Email         string `json:"email"`
-		Subject       string `json:"subject"`
+		Subject       string `json:"subject"`     // legacy free-text; used if SubjectID is absent
+		SubjectID     *uint  `json:"subject_id"`  // preferred: a subjects master-list id
 		Qualification string `json:"qualification"`
 		Username      string `json:"username"`
 	}
@@ -194,6 +195,18 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "name, employee_id, and username are required"})
 	}
 
+	// Prefer the master-list subject_id; resolve to its name so the legacy
+	// `subject` label stays in sync. Fall back to free-text for older clients.
+	var subjectID *uint
+	if body.SubjectID != nil && *body.SubjectID > 0 {
+		name, ok := subjectNameByID(h.DB, *body.SubjectID, schoolID)
+		if !ok {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject not found in this school"})
+		}
+		body.Subject = name
+		subjectID = body.SubjectID
+	}
+
 	hash, err := auth.HashPassword(auth.DefaultPassword)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to hash password"})
@@ -206,6 +219,7 @@ func (h *TeachersHandler) CreateTeacher(c *fiber.Ctx) error {
 		Phone:         body.Phone,
 		Email:         body.Email,
 		Subject:       body.Subject,
+		SubjectID:     subjectID,
 		Qualification: body.Qualification,
 		IsActive:      true,
 	}
@@ -267,6 +281,7 @@ func (h *TeachersHandler) UpdateTeacher(c *fiber.Ctx) error {
 		Phone         *string `json:"phone,omitempty"`
 		Email         *string `json:"email,omitempty"`
 		Subject       *string `json:"subject,omitempty"`
+		SubjectID     *uint   `json:"subject_id,omitempty"` // preferred; 0 clears the link
 		Qualification *string `json:"qualification,omitempty"`
 	}
 	if err := c.BodyParser(&body); err != nil {
@@ -289,7 +304,21 @@ func (h *TeachersHandler) UpdateTeacher(c *fiber.Ctx) error {
 	if body.Email != nil {
 		updates["email"] = *body.Email
 	}
-	if body.Subject != nil {
+	// Subject: prefer subject_id (resolve to its name; 0 clears the link). Fall
+	// back to legacy free-text subject when no subject_id is sent.
+	if body.SubjectID != nil {
+		if *body.SubjectID == 0 {
+			updates["subject_id"] = nil
+			updates["subject"] = ""
+		} else {
+			name, ok := subjectNameByID(h.DB, *body.SubjectID, schoolID)
+			if !ok {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "subject not found in this school"})
+			}
+			updates["subject_id"] = *body.SubjectID
+			updates["subject"] = name
+		}
+	} else if body.Subject != nil {
 		updates["subject"] = *body.Subject
 	}
 	if body.Qualification != nil {
