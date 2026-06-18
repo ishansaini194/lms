@@ -2,14 +2,11 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
 	"gorm.io/gorm"
@@ -23,8 +20,6 @@ type LibraryHandler struct {
 func NewLibraryHandler(db *gorm.DB, baseDir string) *LibraryHandler {
 	return &LibraryHandler{DB: db, BaseDir: baseDir}
 }
-
-const maxLibraryFileSize = 25 * 1024 * 1024 // 25 MB
 
 var validLibraryCategories = map[string]bool{
 	"notes": true, "pyq": true,
@@ -276,39 +271,19 @@ func (h *LibraryHandler) Upload(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file is required"})
 	}
-	if fileHeader.Size > maxLibraryFileSize {
+	if fileHeader.Size > maxUploadSize {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file exceeds 25MB limit"})
 	}
 
-	// Validate it's actually a PDF: extension + magic bytes
-	if strings.ToLower(filepath.Ext(fileHeader.Filename)) != ".pdf" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "only PDF files are allowed"})
+	// Validate it's actually a PDF (extension + magic bytes), then store it.
+	ext, verr := detectPDF(fileHeader)
+	if verr != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": verr.Error()})
 	}
-	src, err := fileHeader.Open()
+	relURL, diskPath, err := saveUpload(c, h.BaseDir, schoolID, fileHeader, ext)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to read file"})
-	}
-	header := make([]byte, 5)
-	n, _ := src.Read(header)
-	src.Close()
-	if n < 5 || string(header[:5]) != "%PDF-" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file is not a valid PDF"})
-	}
-
-	// Build storage path: {BaseDir}/{school_id}/{uuid}.pdf
-	dir := filepath.Join(h.BaseDir, strconv.Itoa(int(schoolID)))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to prepare storage"})
-	}
-	storedName := uuid.NewString() + ".pdf"
-	diskPath := filepath.Join(dir, storedName)
-
-	if err := c.SaveFile(fileHeader, diskPath); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save file"})
 	}
-
-	// file_url is a relative ref we resolve in Download — not a raw disk path.
-	relURL := filepath.ToSlash(filepath.Join(strconv.Itoa(int(schoolID)), storedName))
 
 	lf := models.Library{
 		SchoolID:     schoolID,
@@ -355,19 +330,7 @@ func (h *LibraryHandler) Download(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 
-	diskPath := filepath.Join(h.BaseDir, filepath.FromSlash(lf.FileUrl))
-	// Safety: ensure resolved path stays under BaseDir
-	absBase, _ := filepath.Abs(h.BaseDir)
-	absPath, _ := filepath.Abs(diskPath)
-	if !strings.HasPrefix(absPath, absBase) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
-	}
-	if _, err := os.Stat(absPath); err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
-	}
-
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, sanitizeFilename(lf.Title)))
-	return c.SendFile(absPath)
+	return serveStoredFile(c, h.BaseDir, lf.FileUrl, "", sanitizeFilename(lf.Title)+".pdf")
 }
 
 // DELETE /api/library/:id  (hard delete + remove from disk; targets cascade)
@@ -396,8 +359,7 @@ func (h *LibraryHandler) Delete(c *fiber.Ctx) error {
 	if err := h.DB.Delete(&lf).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete file record"})
 	}
-	diskPath := filepath.Join(h.BaseDir, filepath.FromSlash(lf.FileUrl))
-	_ = os.Remove(diskPath) // best-effort; row is already gone
+	_ = os.Remove(storedDiskPath(h.BaseDir, lf.FileUrl)) // best-effort; row is already gone
 
 	return c.JSON(fiber.Map{"message": "file deleted"})
 }
@@ -460,14 +422,3 @@ func parseFormUintSlice(c *fiber.Ctx, field string) ([]uint, error) {
 	return out, nil
 }
 
-// sanitizeFilename strips characters unsafe for a download filename header.
-func sanitizeFilename(s string) string {
-	s = strings.ReplaceAll(s, `"`, "")
-	s = strings.ReplaceAll(s, "/", "-")
-	s = strings.ReplaceAll(s, "\\", "-")
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "file"
-	}
-	return s
-}

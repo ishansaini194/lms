@@ -2,15 +2,12 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
 	"gorm.io/gorm"
@@ -492,7 +489,7 @@ func (h *HomeworksHandler) UploadAttachment(c *fiber.Ctx) error {
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file is required"})
 	}
-	if fileHeader.Size > maxAttachmentFileSize {
+	if fileHeader.Size > maxUploadSize {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file exceeds 25MB limit"})
 	}
 	contentType, ext, verr := detectImageOrPDF(fileHeader)
@@ -500,22 +497,16 @@ func (h *HomeworksHandler) UploadAttachment(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": verr.Error()})
 	}
 
-	dir := filepath.Join(h.BaseDir, strconv.Itoa(int(schoolID)))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to prepare storage"})
-	}
-	storedName := uuid.NewString() + ext
-	diskPath := filepath.Join(dir, storedName)
-	if err := c.SaveFile(fileHeader, diskPath); err != nil {
+	relURL, diskPath, err := saveUpload(c, h.BaseDir, schoolID, fileHeader, ext)
+	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save file"})
 	}
-	relURL := filepath.ToSlash(filepath.Join(strconv.Itoa(int(schoolID)), storedName))
 
 	att := models.HomeworkAttachment{
 		SchoolID:    schoolID,
 		HomeworkID:  hw.ID,
 		FileUrl:     relURL,
-		FileName:    sanitizeAttachmentName(fileHeader.Filename),
+		FileName:    sanitizeFilename(fileHeader.Filename),
 		ContentType: contentType,
 		FileSize:    fileHeader.Size,
 	}
@@ -535,7 +526,7 @@ func (h *HomeworksHandler) DownloadAttachment(c *fiber.Ctx) error {
 	if !ok {
 		return nil
 	}
-	return serveAttachment(c, h.BaseDir, att)
+	return serveStoredFile(c, h.BaseDir, att.FileUrl, att.ContentType, sanitizeFilename(att.FileName))
 }
 
 // DELETE /api/homeworks/:id/attachments/:aid — remove an attachment (row + file).
@@ -550,8 +541,7 @@ func (h *HomeworksHandler) DeleteAttachment(c *fiber.Ctx) error {
 	if err := h.DB.Delete(&models.HomeworkAttachment{}, att.ID).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete attachment"})
 	}
-	diskPath := filepath.Join(h.BaseDir, filepath.FromSlash(att.FileUrl))
-	_ = os.Remove(diskPath) // best-effort; row is already gone
+	_ = os.Remove(storedDiskPath(h.BaseDir, att.FileUrl)) // best-effort; row is already gone
 	return c.JSON(fiber.Map{"message": "attachment deleted"})
 }
 
@@ -598,38 +588,3 @@ func attachmentsByHomeworkID(db *gorm.DB, schoolID uint, hwIDs []uint) map[uint]
 	return out
 }
 
-// serveAttachment streams an attachment file with a safe, original-name download.
-// Shared by the teacher/admin and student download routes.
-func serveAttachment(c *fiber.Ctx, baseDir string, att *models.HomeworkAttachment) error {
-	diskPath := filepath.Join(baseDir, filepath.FromSlash(att.FileUrl))
-	absBase, _ := filepath.Abs(baseDir)
-	absPath, _ := filepath.Abs(diskPath)
-	if !strings.HasPrefix(absPath, absBase) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
-	}
-	if _, err := os.Stat(absPath); err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
-	}
-	c.Set("Content-Type", att.ContentType)
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, sanitizeAttachmentName(att.FileName)))
-	return c.SendFile(absPath)
-}
-
-// sanitizeAttachmentName strips path separators and control characters from an
-// original filename so it's safe to echo in a Content-Disposition header and to
-// store. Keeps the extension.
-func sanitizeAttachmentName(s string) string {
-	s = filepath.Base(s)
-	s = strings.ReplaceAll(s, `"`, "")
-	s = strings.Map(func(r rune) rune {
-		if r < 32 {
-			return -1
-		}
-		return r
-	}, s)
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return "file"
-	}
-	return s
-}

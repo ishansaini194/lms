@@ -2,9 +2,6 @@ package handlers
 
 import (
 	"errors"
-	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -397,7 +394,7 @@ func (h *StudentPortalHandler) HomeworkAttachmentDownload(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "attachment not found"})
 	}
 
-	return serveAttachment(c, h.HomeworkBaseDir, &att)
+	return serveStoredFile(c, h.HomeworkBaseDir, att.FileUrl, att.ContentType, sanitizeFilename(att.FileName))
 }
 
 // GET /api/me/results — the student's exam results (all years), with exam info.
@@ -525,16 +522,5 @@ func (h *StudentPortalHandler) LibraryDownload(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
 	}
 
-	diskPath := filepath.Join(h.LibraryBaseDir, filepath.FromSlash(lf.FileUrl))
-	absBase, _ := filepath.Abs(h.LibraryBaseDir)
-	absPath, _ := filepath.Abs(diskPath)
-	if !strings.HasPrefix(absPath, absBase) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
-	}
-	if _, err := os.Stat(absPath); err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
-	}
-
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s.pdf"`, sanitizeFilename(lf.Title)))
-	return c.SendFile(absPath)
+	return serveStoredFile(c, h.LibraryBaseDir, lf.FileUrl, "", sanitizeFilename(lf.Title)+".pdf")
 }

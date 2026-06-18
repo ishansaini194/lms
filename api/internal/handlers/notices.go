@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"bytes"
 	"errors"
-	"fmt"
 	"mime/multipart"
 	"os"
 	"path/filepath"
@@ -11,14 +9,11 @@ import (
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/google/uuid"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
 	"github.com/ishansaini194/lms/api/internal/services"
 	"gorm.io/gorm"
 )
-
-const maxNoticeAttachmentSize = 25 * 1024 * 1024 // 25 MB
 
 type NoticesHandler struct {
 	DB      *gorm.DB
@@ -27,42 +22,6 @@ type NoticesHandler struct {
 
 func NewNoticesHandler(db *gorm.DB, baseDir string) *NoticesHandler {
 	return &NoticesHandler{DB: db, BaseDir: baseDir}
-}
-
-// detectNoticeAttachment validates a notice attachment by extension AND magic
-// bytes (PDF / JPEG / PNG). Returns the normalized extension (".pdf"/".jpg"/
-// ".png") and true when valid.
-func detectNoticeAttachment(fh *multipart.FileHeader) (string, bool) {
-	ext := strings.ToLower(filepath.Ext(fh.Filename))
-	switch ext {
-	case ".pdf", ".jpg", ".jpeg", ".png":
-	default:
-		return "", false
-	}
-	f, err := fh.Open()
-	if err != nil {
-		return "", false
-	}
-	defer f.Close()
-	head := make([]byte, 8)
-	n, _ := f.Read(head)
-	head = head[:n]
-
-	switch ext {
-	case ".pdf":
-		if len(head) >= 5 && string(head[:5]) == "%PDF-" {
-			return ".pdf", true
-		}
-	case ".jpg", ".jpeg":
-		if len(head) >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF {
-			return ".jpg", true
-		}
-	case ".png":
-		if bytes.HasPrefix(head, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}) {
-			return ".png", true
-		}
-	}
-	return "", false
 }
 
 type CreateNoticeRequest struct {
@@ -315,23 +274,18 @@ func (h *NoticesHandler) Create(c *fiber.Ctx) error {
 	// before the transaction; roll the file back if the DB insert fails.
 	var diskPath string
 	if fileHeader != nil {
-		if fileHeader.Size > maxNoticeAttachmentSize {
+		if fileHeader.Size > maxUploadSize {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "attachment exceeds 25MB limit"})
 		}
-		ext, ok := detectNoticeAttachment(fileHeader)
-		if !ok {
+		_, ext, verr := detectImageOrPDF(fileHeader)
+		if verr != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "attachment must be a PDF, JPG, or PNG"})
 		}
-		dir := filepath.Join(h.BaseDir, strconv.Itoa(int(schoolID)))
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to prepare storage"})
-		}
-		storedName := uuid.NewString() + ext
-		diskPath = filepath.Join(dir, storedName)
-		if err := c.SaveFile(fileHeader, diskPath); err != nil {
+		relURL, dp, err := saveUpload(c, h.BaseDir, schoolID, fileHeader, ext)
+		if err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save attachment"})
 		}
-		relURL := filepath.ToSlash(filepath.Join(strconv.Itoa(int(schoolID)), storedName))
+		diskPath = dp
 		origName := filepath.Base(fileHeader.Filename)
 		size := fileHeader.Size
 		notice.AttachmentURL = &relURL
@@ -513,22 +467,11 @@ func (h *NoticesHandler) DownloadAttachment(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "no attachment"})
 	}
 
-	diskPath := filepath.Join(h.BaseDir, filepath.FromSlash(*notice.AttachmentURL))
-	absBase, _ := filepath.Abs(h.BaseDir)
-	absPath, _ := filepath.Abs(diskPath)
-	if !strings.HasPrefix(absPath, absBase) {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
-	}
-	if _, err := os.Stat(absPath); err != nil {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
-	}
-
 	name := "attachment"
 	if notice.AttachmentName != nil && *notice.AttachmentName != "" {
 		name = sanitizeFilename(*notice.AttachmentName)
 	}
-	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, name))
-	return c.SendFile(absPath)
+	return serveStoredFile(c, h.BaseDir, *notice.AttachmentURL, "", name)
 }
 
 // validateAndInsertTargets verifies each class_year belongs to the school, then bulk-inserts targets.
