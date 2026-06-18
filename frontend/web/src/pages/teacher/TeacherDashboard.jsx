@@ -249,6 +249,8 @@ export default function TeacherDashboard() {
     const notices = data?.recent_notices || [];
     const homework = data?.recent_homework || [];
     const distinctClasses = new Set(responsibilities.map(r => r.class_label)).size;
+    // Subjects taught = the non-class-teacher responsibility rows.
+    const subjectCount = responsibilities.filter(r => !r.is_class_teacher).length;
 
     body = (
       <>
@@ -258,8 +260,8 @@ export default function TeacherDashboard() {
         {/* Stat row — each tile navigates to the matching section. */}
         <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 14 }}>
           <div className="hf-clickable" onClick={() => navigate('/teacher/classes')}>
-            <Stat label="Classes I teach" value={responsibilities.length} icon={I.grid}
-              hint={`across ${distinctClasses} ${distinctClasses === 1 ? 'class' : 'classes'}`} />
+            <Stat label="Classes I teach" value={distinctClasses} icon={I.grid}
+              hint={subjectCount > 0 ? `${subjectCount} subject${subjectCount === 1 ? '' : 's'} taught` : 'class teacher'} />
           </div>
           <div className="hf-clickable" onClick={() => navigate('/teacher/classes')}>
             <Stat label="Students" value={data?.total_students ?? 0} icon={I.user} hint="total load" />

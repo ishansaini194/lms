@@ -193,10 +193,15 @@ func (h *TeacherDashboardHandler) Dashboard(c *fiber.Ctx) error {
 			studentCountByCY[cc.ClassYearID] = cc.Cnt
 		}
 	}
-	total := 0
+	// Per-row count is the class size. TotalStudents sums each class-year ONCE
+	// (over distinct class-years, not per responsibility row) — otherwise a
+	// teacher who is both class teacher of a class and teaches a subject in it
+	// would have that class's students counted twice.
 	for i := range responsibilities {
-		n := studentCountByCY[responsibilities[i].ClassYearID]
-		responsibilities[i].StudentCount = n
+		responsibilities[i].StudentCount = studentCountByCY[responsibilities[i].ClassYearID]
+	}
+	total := 0
+	for _, n := range studentCountByCY {
 		total += n
 	}
 	resp.Responsibilities = responsibilities
