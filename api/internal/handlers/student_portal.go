@@ -99,12 +99,13 @@ func (h *StudentPortalHandler) DeletePushSubscription(c *fiber.Ctx) error {
 }
 
 type StudentPortalHandler struct {
-	DB             *gorm.DB
-	LibraryBaseDir string
+	DB              *gorm.DB
+	LibraryBaseDir  string
+	HomeworkBaseDir string
 }
 
-func NewStudentPortalHandler(db *gorm.DB, libraryBaseDir string) *StudentPortalHandler {
-	return &StudentPortalHandler{DB: db, LibraryBaseDir: libraryBaseDir}
+func NewStudentPortalHandler(db *gorm.DB, libraryBaseDir, homeworkBaseDir string) *StudentPortalHandler {
+	return &StudentPortalHandler{DB: db, LibraryBaseDir: libraryBaseDir, HomeworkBaseDir: homeworkBaseDir}
 }
 
 // studentID pulls the student_id from the JWT and guards against a missing/zero
@@ -328,7 +329,75 @@ func (h *StudentPortalHandler) Homework(c *fiber.Ctx) error {
 			}
 		}
 	}
+
+	// Stamp the posting teacher's name so the student sees who set the homework.
+	tIDs := []uint{}
+	tSeen := map[uint]bool{}
+	for _, hw := range homeworks {
+		if hw.TeacherID != 0 && !tSeen[hw.TeacherID] {
+			tSeen[hw.TeacherID] = true
+			tIDs = append(tIDs, hw.TeacherID)
+		}
+	}
+	tNames := teacherNamesByID(h.DB, schoolID, tIDs)
+	for i := range homeworks {
+		if n, ok := tNames[homeworks[i].TeacherID]; ok {
+			nm := n
+			homeworks[i].TeacherName = &nm
+		}
+	}
+
+	// Stamp attachments so the student can see/download attached files.
+	hwIDs := make([]uint, len(homeworks))
+	for i := range homeworks {
+		hwIDs[i] = homeworks[i].ID
+	}
+	attByHW := attachmentsByHomeworkID(h.DB, schoolID, hwIDs)
+	for i := range homeworks {
+		homeworks[i].Attachments = attByHW[homeworks[i].ID]
+		if homeworks[i].Attachments == nil {
+			homeworks[i].Attachments = []models.HomeworkAttachment{}
+		}
+	}
+
 	return c.JSON(homeworks)
+}
+
+// GET /api/me/homework/attachments/:aid/download — stream a homework attachment,
+// but only if its homework is targeted at one of the student's active class-years.
+func (h *StudentPortalHandler) HomeworkAttachmentDownload(c *fiber.Ctx) error {
+	sid, ok := h.studentID(c)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "not a student account"})
+	}
+	schoolID := middleware.GetSchoolID(c)
+
+	aid, err := strconv.Atoi(c.Params("aid"))
+	if err != nil || aid <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid attachment id"})
+	}
+
+	var att models.HomeworkAttachment
+	if err := h.DB.Where("id = ? AND school_id = ?", aid, schoolID).First(&att).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "attachment not found"})
+	}
+
+	// Authorize: the parent homework must target a class-year the student is in.
+	classYearIDs, err := h.activeClassYearIDs(sid, schoolID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "database error"})
+	}
+	var match int64
+	if len(classYearIDs) > 0 {
+		h.DB.Model(&models.HomeworkTarget{}).
+			Where("homework_id = ? AND class_year_id IN ?", att.HomeworkID, classYearIDs).
+			Count(&match)
+	}
+	if match == 0 {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "attachment not found"})
+	}
+
+	return serveAttachment(c, h.HomeworkBaseDir, &att)
 }
 
 // GET /api/me/results — the student's exam results (all years), with exam info.

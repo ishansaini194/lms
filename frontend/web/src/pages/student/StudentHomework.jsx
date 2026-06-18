@@ -3,8 +3,23 @@ import { StudentChrome } from '@/components/student/StudentChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { I } from '@/components/icons';
 import { Card, Pill, Btn, ModalShell } from '@/components/ui/primitives';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getToken } from '@/lib/api';
 import { useIsMobile } from '@/lib/useIsMobile';
+import { deliverFile } from '@/lib/fileDelivery';
+
+// Fetch an attachment (auth required) and hand it to the device save flow.
+async function downloadAttachment(att, onError) {
+  try {
+    const res = await fetch(`/api/me/homework/attachments/${att.id}/download`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    });
+    if (!res.ok) throw new Error('download failed');
+    const blob = await res.blob();
+    await deliverFile(att.file_name || 'attachment', blob, att.file_name);
+  } catch {
+    onError?.('Could not download the file.');
+  }
+}
 
 // ── helpers (module-level — no nesting in render) ──────────────────────────
 
@@ -86,11 +101,59 @@ const HomeworkCard = ({ h, onOpen }) => {
           <Pill tone={due.tone} style={{ flexShrink: 0 }}>{due.label}</Pill>
         </div>
         <div style={{ ...hfText.small, color: hf.ink2, lineHeight: 1.5, marginBottom: 8 }}>{truncate(h.content)}</div>
-        <div style={{ ...hfText.small, fontSize: 11, color: hf.muted, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-          <span style={{ display: 'inline-flex' }}>{I.cal}</span>{formatDateLong(h.due_date)}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ ...hfText.small, fontSize: 11, color: hf.muted, display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <span style={{ display: 'inline-flex' }}>{I.cal}</span>{formatDateLong(h.due_date)}
+          </div>
+          {h.teacher_name && (
+            <div style={{ ...hfText.small, fontSize: 11, color: hf.muted }}>
+              Posted by {h.teacher_name}
+            </div>
+          )}
+          {h.attachments?.length > 0 && (
+            <div style={{ ...hfText.small, fontSize: 11, color: hf.muted, display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ display: 'inline-flex' }}>{I.download}</span>
+              {h.attachments.length} file{h.attachments.length === 1 ? '' : 's'}
+            </div>
+          )}
         </div>
       </div>
     </Card>
+  );
+};
+
+// Attachment list for the detail modal — each file downloads on tap (auth fetch).
+const AttachmentList = ({ attachments }) => {
+  const [err, setErr] = useState('');
+  const [busyId, setBusyId] = useState(null);
+  if (!attachments || attachments.length === 0) return null;
+
+  const onGet = async (att) => {
+    setErr('');
+    setBusyId(att.id);
+    await downloadAttachment(att, setErr);
+    setBusyId(null);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ ...hfText.small, fontSize: 11, color: hf.muted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+        Attachments · {attachments.length}
+      </div>
+      {attachments.map((att) => (
+        <div key={att.id} style={{
+          display: 'flex', alignItems: 'center', gap: 10,
+          padding: '9px 11px', borderRadius: 9,
+          border: `1px solid ${hf.border}`, background: hf.surface,
+        }}>
+          <span style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{att.file_name}</span>
+          <Btn variant="soft" size="sm" icon={I.download} disabled={busyId === att.id} onClick={() => onGet(att)}>
+            {busyId === att.id ? '…' : 'Save'}
+          </Btn>
+        </div>
+      ))}
+      {err && <div style={{ ...hfText.small, color: hf.accent }}>{err}</div>}
+    </div>
   );
 };
 
@@ -104,10 +167,14 @@ const HomeworkDetail = ({ h, onClose }) => {
         width={560}
         footer={<Btn variant="ghost" size="md" onClick={onClose}>Close</Btn>}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <Pill tone={due.tone}>{due.label}</Pill>
+          {h.teacher_name && (
+            <span style={{ ...hfText.small, color: hf.muted }}>Posted by {h.teacher_name}</span>
+          )}
         </div>
         <div style={{ ...hfText.body, color: hf.ink2, lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{h.content}</div>
+        <AttachmentList attachments={h.attachments} />
       </ModalShell>
     </Overlay>
   );

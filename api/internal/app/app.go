@@ -170,7 +170,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	notices.Delete("/:id", noticesHandler.Delete)
 
 	// Homeworks
-	homeworksHandler := handlers.NewHomeworksHandler(db)
+	homeworksHandler := handlers.NewHomeworksHandler(db, "uploads/homework")
 
 	homeworks := api.Group("/homeworks", middleware.AuthRequired(), middleware.RequireRole("admin", "teacher"))
 	homeworks.Get("/", homeworksHandler.List)
@@ -178,6 +178,10 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	homeworks.Post("/", homeworksHandler.Create)
 	homeworks.Put("/:id", homeworksHandler.Update)
 	homeworks.Delete("/:id", homeworksHandler.Delete)
+	// Attachments (images/PDFs) on a homework — multiple per homework.
+	homeworks.Post("/:id/attachments", homeworksHandler.UploadAttachment)
+	homeworks.Get("/:id/attachments/:aid/download", homeworksHandler.DownloadAttachment)
+	homeworks.Delete("/:id/attachments/:aid", homeworksHandler.DeleteAttachment)
 
 	// Exam Terms (school-wide terms that group subject-exams). Reads are open to
 	// teachers too (the teacher exam-create modal needs the term picker); the
@@ -288,7 +292,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	auditLogs.Get("/", auditHandler.List)
 
 	// ---------- Student portal (read-only, scoped to own data) ----------
-	studentPortalHandler := handlers.NewStudentPortalHandler(db, "uploads/library")
+	studentPortalHandler := handlers.NewStudentPortalHandler(db, "uploads/library", "uploads/homework")
 
 	// Web Push device subscriptions — shared by students AND teachers. Register
 	// this before the student-only /me group: Fiber group middleware is
@@ -305,6 +309,7 @@ func registerRoutes(srv *server.Server, db *gorm.DB) {
 	me.Get("/fees/:id/payments", studentPortalHandler.FeePayments)
 	me.Get("/notices", studentPortalHandler.Notices)
 	me.Get("/homework", studentPortalHandler.Homework)
+	me.Get("/homework/attachments/:aid/download", studentPortalHandler.HomeworkAttachmentDownload)
 	me.Get("/results", studentPortalHandler.Results)
 	me.Get("/assessment-marks", studentPortalHandler.AssessmentMarks)
 	me.Get("/library", studentPortalHandler.Library)

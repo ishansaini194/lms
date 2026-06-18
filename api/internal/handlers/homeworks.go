@@ -2,22 +2,27 @@ package handlers
 
 import (
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/google/uuid"
 	"github.com/ishansaini194/lms/api/internal/middleware"
 	"github.com/ishansaini194/lms/api/internal/models"
 	"gorm.io/gorm"
 )
 
 type HomeworksHandler struct {
-	DB *gorm.DB
+	DB      *gorm.DB
+	BaseDir string // attachment storage root, e.g. "uploads/homework"
 }
 
-func NewHomeworksHandler(db *gorm.DB) *HomeworksHandler {
-	return &HomeworksHandler{DB: db}
+func NewHomeworksHandler(db *gorm.DB, baseDir string) *HomeworksHandler {
+	return &HomeworksHandler{DB: db, BaseDir: baseDir}
 }
 
 type CreateHomeworkRequest struct {
@@ -150,7 +155,36 @@ func (h *HomeworksHandler) enrichHomeworks(schoolID uint, homeworks []models.Hom
 	}
 
 	stampHomeworkSubjects(h.DB, schoolID, items)
+	stampHomeworkTeachers(h.DB, schoolID, items)
+
+	attByHW := attachmentsByHomeworkID(h.DB, schoolID, hwIDs)
+	for i := range items {
+		items[i].Attachments = attByHW[items[i].ID] // nil → marshals as [] via the model default below
+		if items[i].Attachments == nil {
+			items[i].Attachments = []models.HomeworkAttachment{}
+		}
+	}
 	return items
+}
+
+// stampHomeworkTeachers fills TeacherName on each item from its TeacherID via
+// one batched lookup. Works for homeworkListItem (embeds Homework).
+func stampHomeworkTeachers(db *gorm.DB, schoolID uint, items []homeworkListItem) {
+	ids := []uint{}
+	seen := map[uint]bool{}
+	for i := range items {
+		if items[i].TeacherID != 0 && !seen[items[i].TeacherID] {
+			seen[items[i].TeacherID] = true
+			ids = append(ids, items[i].TeacherID)
+		}
+	}
+	names := teacherNamesByID(db, schoolID, ids)
+	for i := range items {
+		if name, ok := names[items[i].TeacherID]; ok {
+			n := name
+			items[i].TeacherName = &n
+		}
+	}
 }
 
 // stampHomeworkSubjects fills SubjectName on each item from its SubjectID via
@@ -202,6 +236,11 @@ func (h *HomeworksHandler) GetOne(c *fiber.Ctx) error {
 		Where("homework_id = ?", homework.ID).
 		Pluck("class_year_id", &ids).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to fetch targets"})
+	}
+
+	homework.Attachments = attachmentsByHomeworkID(h.DB, schoolID, []uint{homework.ID})[homework.ID]
+	if homework.Attachments == nil {
+		homework.Attachments = []models.HomeworkAttachment{}
 	}
 
 	return c.JSON(homeworkResponse{Homework: homework, ClassYearIDs: ids})
@@ -415,4 +454,182 @@ func (h *HomeworksHandler) validateAndInsertTargets(tx *gorm.DB, schoolID, homew
 		targets = append(targets, models.HomeworkTarget{HomeworkID: homeworkID, ClassYearID: id})
 	}
 	return tx.Create(&targets).Error
+}
+
+// ─── Attachments ──────────────────────────────────────────────────────────
+
+// loadOwnedHomework fetches a homework scoped to the caller's school and, for
+// teachers, to their own authorship (admins may touch any). Returns a 404-style
+// error response already written to c when not found / not theirs.
+func (h *HomeworksHandler) loadOwnedHomework(c *fiber.Ctx, id int) (*models.Homework, bool) {
+	schoolID := middleware.GetSchoolID(c)
+	var hw models.Homework
+	if err := h.DB.Where("id = ? AND school_id = ?", id, schoolID).First(&hw).Error; err != nil {
+		c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "homework not found"})
+		return nil, false
+	}
+	if isTeacher(c) && hw.TeacherID != middleware.GetTeacherID(c) {
+		c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "homework not found"})
+		return nil, false
+	}
+	return &hw, true
+}
+
+// POST /api/homeworks/:id/attachments  (multipart/form-data, field: file)
+// Attaches one JPG/PNG/PDF to a homework the caller owns (admin: any).
+func (h *HomeworksHandler) UploadAttachment(c *fiber.Ctx) error {
+	schoolID := middleware.GetSchoolID(c)
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid homework id"})
+	}
+	hw, ok := h.loadOwnedHomework(c, id)
+	if !ok {
+		return nil
+	}
+
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file is required"})
+	}
+	if fileHeader.Size > maxAttachmentFileSize {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "file exceeds 25MB limit"})
+	}
+	contentType, ext, verr := detectImageOrPDF(fileHeader)
+	if verr != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": verr.Error()})
+	}
+
+	dir := filepath.Join(h.BaseDir, strconv.Itoa(int(schoolID)))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to prepare storage"})
+	}
+	storedName := uuid.NewString() + ext
+	diskPath := filepath.Join(dir, storedName)
+	if err := c.SaveFile(fileHeader, diskPath); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to save file"})
+	}
+	relURL := filepath.ToSlash(filepath.Join(strconv.Itoa(int(schoolID)), storedName))
+
+	att := models.HomeworkAttachment{
+		SchoolID:    schoolID,
+		HomeworkID:  hw.ID,
+		FileUrl:     relURL,
+		FileName:    sanitizeAttachmentName(fileHeader.Filename),
+		ContentType: contentType,
+		FileSize:    fileHeader.Size,
+	}
+	if err := h.DB.Create(&att).Error; err != nil {
+		_ = os.Remove(diskPath)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to record attachment"})
+	}
+	return c.Status(fiber.StatusCreated).JSON(att)
+}
+
+// GET /api/homeworks/:id/attachments/:aid/download — stream an attachment.
+func (h *HomeworksHandler) DownloadAttachment(c *fiber.Ctx) error {
+	if _, ok := h.loadOwnedHomeworkFromParam(c); !ok {
+		return nil
+	}
+	att, ok := h.loadAttachment(c)
+	if !ok {
+		return nil
+	}
+	return serveAttachment(c, h.BaseDir, att)
+}
+
+// DELETE /api/homeworks/:id/attachments/:aid — remove an attachment (row + file).
+func (h *HomeworksHandler) DeleteAttachment(c *fiber.Ctx) error {
+	if _, ok := h.loadOwnedHomeworkFromParam(c); !ok {
+		return nil
+	}
+	att, ok := h.loadAttachment(c)
+	if !ok {
+		return nil
+	}
+	if err := h.DB.Delete(&models.HomeworkAttachment{}, att.ID).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to delete attachment"})
+	}
+	diskPath := filepath.Join(h.BaseDir, filepath.FromSlash(att.FileUrl))
+	_ = os.Remove(diskPath) // best-effort; row is already gone
+	return c.JSON(fiber.Map{"message": "attachment deleted"})
+}
+
+// loadOwnedHomeworkFromParam reads :id and applies the ownership check.
+func (h *HomeworksHandler) loadOwnedHomeworkFromParam(c *fiber.Ctx) (*models.Homework, bool) {
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil || id <= 0 {
+		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid homework id"})
+		return nil, false
+	}
+	return h.loadOwnedHomework(c, id)
+}
+
+// loadAttachment reads :aid scoped to the school and its parent :id homework.
+func (h *HomeworksHandler) loadAttachment(c *fiber.Ctx) (*models.HomeworkAttachment, bool) {
+	schoolID := middleware.GetSchoolID(c)
+	hwID, _ := strconv.Atoi(c.Params("id"))
+	aid, err := strconv.Atoi(c.Params("aid"))
+	if err != nil || aid <= 0 {
+		c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid attachment id"})
+		return nil, false
+	}
+	var att models.HomeworkAttachment
+	if err := h.DB.Where("id = ? AND school_id = ? AND homework_id = ?", aid, schoolID, hwID).First(&att).Error; err != nil {
+		c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "attachment not found"})
+		return nil, false
+	}
+	return &att, true
+}
+
+// attachmentsByHomeworkID returns homework_id → []attachment for the given ids in
+// one batched query (no N+1). Ordered oldest-first for stable display.
+func attachmentsByHomeworkID(db *gorm.DB, schoolID uint, hwIDs []uint) map[uint][]models.HomeworkAttachment {
+	out := map[uint][]models.HomeworkAttachment{}
+	if len(hwIDs) == 0 {
+		return out
+	}
+	var rows []models.HomeworkAttachment
+	db.Where("school_id = ? AND homework_id IN ?", schoolID, hwIDs).
+		Order("id ASC").Find(&rows)
+	for _, r := range rows {
+		out[r.HomeworkID] = append(out[r.HomeworkID], r)
+	}
+	return out
+}
+
+// serveAttachment streams an attachment file with a safe, original-name download.
+// Shared by the teacher/admin and student download routes.
+func serveAttachment(c *fiber.Ctx, baseDir string, att *models.HomeworkAttachment) error {
+	diskPath := filepath.Join(baseDir, filepath.FromSlash(att.FileUrl))
+	absBase, _ := filepath.Abs(baseDir)
+	absPath, _ := filepath.Abs(diskPath)
+	if !strings.HasPrefix(absPath, absBase) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid file path"})
+	}
+	if _, err := os.Stat(absPath); err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "file missing from storage"})
+	}
+	c.Set("Content-Type", att.ContentType)
+	c.Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, sanitizeAttachmentName(att.FileName)))
+	return c.SendFile(absPath)
+}
+
+// sanitizeAttachmentName strips path separators and control characters from an
+// original filename so it's safe to echo in a Content-Disposition header and to
+// store. Keeps the extension.
+func sanitizeAttachmentName(s string) string {
+	s = filepath.Base(s)
+	s = strings.ReplaceAll(s, `"`, "")
+	s = strings.Map(func(r rune) rune {
+		if r < 32 {
+			return -1
+		}
+		return r
+	}, s)
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "file"
+	}
+	return s
 }

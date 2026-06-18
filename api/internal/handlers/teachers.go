@@ -20,6 +20,28 @@ func NewTeachersHandler(db *gorm.DB) *TeachersHandler {
 	return &TeachersHandler{DB: db}
 }
 
+// teacherNamesByID returns id→name for the given teacher ids in one batched
+// query (no N+1). Mirrors subjectNamesByID; school-scoped. Missing ids are
+// simply absent from the map.
+func teacherNamesByID(db *gorm.DB, schoolID uint, ids []uint) map[uint]string {
+	out := map[uint]string{}
+	if len(ids) == 0 {
+		return out
+	}
+	type row struct {
+		ID   uint
+		Name string
+	}
+	var rows []row
+	db.Table("teachers").Select("id, name").
+		Where("school_id = ? AND id IN ?", schoolID, ids).
+		Scan(&rows)
+	for _, r := range rows {
+		out[r.ID] = r.Name
+	}
+	return out
+}
+
 // teacherListItem enriches a Teacher with the class(es) they are class-teacher
 // of for the current academic year. The embedded Teacher flattens into the same
 // JSON object.

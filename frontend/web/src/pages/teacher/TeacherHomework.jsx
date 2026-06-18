@@ -3,7 +3,12 @@ import { useSearchParams } from 'react-router-dom';
 import { TeacherChrome } from '@/components/teacher/TeacherChrome';
 import { hf, hfFonts, hfText } from '@/lib/styles';
 import { Card, Pill, Btn, ModalShell, FInput, FTextarea, FSelect } from '@/components/ui/primitives';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiUpload } from '@/lib/api';
+
+// Attachment constraints — mirror the backend (JPG/PNG/PDF, 25MB).
+const ATTACH_ACCEPT = 'image/jpeg,image/png,application/pdf,.jpg,.jpeg,.png,.pdf';
+const ATTACH_MAX = 25 * 1024 * 1024;
+const fmtSize = (b) => b >= 1024 * 1024 ? `${(b / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`;
 
 // ── helpers (module-level) ──────────────────────────────────────────────────
 
@@ -72,6 +77,24 @@ const Overlay = ({ onClose, children }) => (
   </div>
 );
 
+// One row in the attachment list — works for both saved attachments and pending
+// (not-yet-uploaded) File picks. `pending` just tweaks the muted hint.
+const FileRow = ({ name, size, pending, onRemove }) => (
+  <div style={{
+    display: 'flex', alignItems: 'center', gap: 10,
+    padding: '8px 11px', borderRadius: 9,
+    border: `1px solid ${hf.border}`, background: hf.surface,
+  }}>
+    <span style={{ ...hfText.small, fontWeight: 600, color: hf.ink2, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+    <span style={{ ...hfText.small, fontSize: 11, color: hf.muted, flexShrink: 0 }}>{pending ? 'not uploaded · ' : ''}{fmtSize(size)}</span>
+    <button type="button" onClick={onRemove} aria-label="Remove" className="hf-btn" style={{
+      width: 26, height: 26, borderRadius: 7, flexShrink: 0,
+      border: `1px solid ${hf.border}`, background: hf.surface, color: hf.accent,
+      display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, lineHeight: 1,
+    }}>×</button>
+  </div>
+);
+
 const HomeworkRow = ({ hw, onEdit, onDelete }) => {
   const overdue = isOverdue(hw.due_date);
   const dateLabel = fmtDate(hw.due_date);
@@ -115,7 +138,41 @@ const HomeworkModal = ({ classes, subjects, initial, preselectClassId, onClose, 
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
+  // Attachments: already-saved files (edit mode) and newly-picked File objects.
+  const [existing, setExisting] = useState(initial?.attachments || []);
+  const [pending, setPending] = useState([]); // [File]
+  const fileRef = useRef(null);
+
   const toggle = (id) => setSelectedIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+
+  const onPickFiles = (e) => {
+    setErr('');
+    const picked = Array.from(e.target.files || []);
+    const tooBig = picked.find((f) => f.size > ATTACH_MAX);
+    if (tooBig) { setErr(`"${tooBig.name}" exceeds the 25MB limit.`); }
+    setPending((p) => [...p, ...picked.filter((f) => f.size <= ATTACH_MAX)]);
+    if (fileRef.current) fileRef.current.value = ''; // allow re-picking the same file
+  };
+  const removePending = (i) => setPending((p) => p.filter((_, idx) => idx !== i));
+
+  // Edit mode: existing attachments delete immediately (they're already saved).
+  const removeExisting = async (att) => {
+    setErr('');
+    try {
+      await apiFetch(`/api/homeworks/${initial.id}/attachments/${att.id}`, { method: 'DELETE' });
+      setExisting((xs) => xs.filter((x) => x.id !== att.id));
+    } catch (e) {
+      setErr(e.message || 'Failed to remove attachment');
+    }
+  };
+
+  const uploadPending = async (homeworkId) => {
+    for (const file of pending) {
+      const fd = new FormData();
+      fd.append('file', file);
+      await apiUpload(`/api/homeworks/${homeworkId}/attachments`, fd);
+    }
+  };
 
   const save = async () => {
     setErr('');
@@ -128,8 +185,15 @@ const HomeworkModal = ({ classes, subjects, initial, preselectClassId, onClose, 
       // backend forces it from the JWT for teachers.
       const body = { subject_id: subjectId ? Number(subjectId) : null, content: content.trim(), class_year_ids: selectedIds };
       if (due) body.due_date = new Date(due).toISOString();
-      if (isEdit) await apiFetch(`/api/homeworks/${initial.id}`, { method: 'PUT', body });
-      else await apiFetch('/api/homeworks', { method: 'POST', body });
+      let homeworkId = initial?.id;
+      if (isEdit) {
+        await apiFetch(`/api/homeworks/${initial.id}`, { method: 'PUT', body });
+      } else {
+        const created = await apiFetch('/api/homeworks', { method: 'POST', body });
+        homeworkId = created?.id;
+      }
+      // Upload any newly-picked files now that we have a homework id.
+      if (homeworkId && pending.length) await uploadPending(homeworkId);
       onSaved?.();
     } catch (e) {
       setErr(e.message || 'Save failed');
@@ -183,7 +247,7 @@ const HomeworkModal = ({ classes, subjects, initial, preselectClassId, onClose, 
 
           <div>
             <FieldLabel>Subject <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
-            <FSelect value={subjectId} onChange={setSubjectId} options={[{ value: '', label: 'No subject' }, ...subjects.map(s => ({ value: String(s.id), label: s.name }))]} />
+            <FSelect value={subjectId} onChange={setSubjectId} options={[{ value: '', label: 'All subjects' }, ...subjects.map(s => ({ value: String(s.id), label: s.name }))]} />
           </div>
 
           <div>
@@ -194,6 +258,30 @@ const HomeworkModal = ({ classes, subjects, initial, preselectClassId, onClose, 
           <div>
             <FieldLabel>Due date <span style={{ color: hf.muted, fontWeight: 400 }}>(optional)</span></FieldLabel>
             <FInput type="date" value={due} onChange={setDue} />
+          </div>
+
+          <div>
+            <FieldLabel>Attachments <span style={{ color: hf.muted, fontWeight: 400 }}>(optional · JPG, PNG, PDF · max 25MB)</span></FieldLabel>
+            <input
+              ref={fileRef}
+              type="file"
+              accept={ATTACH_ACCEPT}
+              multiple
+              onChange={onPickFiles}
+              style={{ display: 'none' }}
+            />
+            <Btn variant="outline" size="sm" onClick={() => fileRef.current?.click()}>+ Add file</Btn>
+
+            {(existing.length > 0 || pending.length > 0) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+                {existing.map((att) => (
+                  <FileRow key={`e-${att.id}`} name={att.file_name} size={att.file_size} onRemove={() => removeExisting(att)} />
+                ))}
+                {pending.map((f, i) => (
+                  <FileRow key={`p-${i}`} name={f.name} size={f.size} pending onRemove={() => removePending(i)} />
+                ))}
+              </div>
+            )}
           </div>
 
           {err && <ErrorBox>{err}</ErrorBox>}

@@ -345,6 +345,23 @@ CREATE TABLE
 
 CREATE INDEX idx_homework_targets_class ON homework_targets (class_year_id);
 
+-- homework_attachments (images/PDFs attached to a homework; multiple per homework)
+CREATE TABLE
+    homework_attachments (
+        id BIGSERIAL PRIMARY KEY,
+        school_id BIGINT NOT NULL REFERENCES schools (id) ON DELETE RESTRICT,
+        homework_id BIGINT NOT NULL REFERENCES homeworks (id) ON DELETE CASCADE,
+        file_url TEXT NOT NULL,
+        file_name VARCHAR(255) NOT NULL, -- original filename, for display + download
+        content_type VARCHAR(100) NOT NULL, -- image/jpeg | image/png | application/pdf
+        file_size BIGINT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW ()
+    );
+
+CREATE INDEX idx_homework_attachments_homework ON homework_attachments (homework_id);
+
+CREATE INDEX idx_homework_attachments_school ON homework_attachments (school_id);
+
 -- exam_terms
 -- A school-wide exam term (e.g. Mid-Term, Final, Unit Test 1) tied to an academic
 -- year. Groups the per-class subject-exams that sit under it; those exams stay
